@@ -41,7 +41,7 @@ If Fireshare is useful to you, [GitHub Sponsors](https://github.com/sponsors/Sha
 
 - Share videos through unique links
 - Public / private feeds (private is link-only)
-- [video transcoding with CPU or GPU](#transcoding-optional)
+- [Video transcoding with CPU or GPU](#transcoding-optional)
 - Password protected videos
 - Game-based organization with cover art
 - Mobile device support
@@ -53,6 +53,19 @@ If Fireshare is useful to you, [GitHub Sponsors](https://github.com/sponsors/Sha
 - [Notifications to Discord and others](./docs/Notifications.md)
 - RSS feed for new public videos
 - [LDAP support](./docs/LDAP.md)
+
+## Supported Video Formats
+
+| Container   | Extension | Notes                                     |
+| ----------- | --------- | ----------------------------------------- |
+| MP4         | `.mp4`    | Most compatible, recommended              |
+| MP4 (Apple) | `.m4v`    | Identical to MP4, common on Apple devices |
+| QuickTime   | `.mov`    | Common on macOS / iOS                     |
+| WebM        | `.webm`   | Open format, browser-native               |
+
+**Supported encodings:** H.264 (AVC), H.265 (HEVC), AV1, VP9.
+
+Files must be in a supported format because the original file is always served directly to the viewer. Transcoding (when enabled) only generates additional lower-quality versions for adaptive streaming; the original is never modified.
 
 ## Navigation
 
@@ -175,6 +188,8 @@ Use the lite image by appending `-lite` to your tag:
 See [LDAP.md](./docs/LDAP.md) for setup instructions.
 
 ### Transcoding (Optional)
+
+When enabled, Fireshare will create lower quality versions of your original supported file type videos. Your viewers can then choose to play your videos at lower qualities that their internet can handle. Fireshare will also attempt to automatically downgrade the quality of a viewer who is constantly buffering.
 
 Transcoding is off by default. To enable it, set the following environment variables:
 
