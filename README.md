@@ -264,13 +264,18 @@ See [EnvironmentVariables.md](./docs/EnvironmentVariables.md) for the full list 
 
 Contributions are welcome. For larger changes, open an issue first to align on scope.
 
-1. Fork the repository
-2. Create a branch from `develop`
-3. Commit your changes
-4. Rebase on latest `develop`
-5. Open a pull request to `develop`
+1. Know how to code! **I DO NOT WANT VIBE CODERS SUBMITTING PRs**
+   AI assisted coding is fine if you can read, understand, and validate AI code.
+   _Asking AI to review itself doesn't count as reading, understanding, and validating AI code._
+2. Fork the repository
+3. Create a branch from `develop`
+4. Commit your changes
+5. Rebase on latest `develop`
+6. Open a pull request to `develop`
 
 For issues and feature requests, visit the [issue tracker](https://github.com/ShaneIsrael/fireshare/issues).
+
+Please DO NOT open a pull request for a feature or addition that was not previously discussed with me. Pull requests that do this will be automatically closed.
 
 ### Database Changes
 
