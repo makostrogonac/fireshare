@@ -41,7 +41,7 @@ If Fireshare is useful to you, [GitHub Sponsors](https://github.com/sponsors/Sha
 
 - Share videos through unique links
 - Public / private feeds (private is link-only)
-- [video transcoding with CPU or GPU](#transcoding-optional)
+- [Video transcoding with CPU or GPU](#transcoding-optional)
 - Password protected videos
 - Game-based organization with cover art
 - Mobile device support
@@ -53,6 +53,19 @@ If Fireshare is useful to you, [GitHub Sponsors](https://github.com/sponsors/Sha
 - [Notifications to Discord and others](./docs/Notifications.md)
 - RSS feed for new public videos
 - [LDAP support](./docs/LDAP.md)
+
+## Supported Video Formats
+
+| Container   | Extension | Notes                                     |
+| ----------- | --------- | ----------------------------------------- |
+| MP4         | `.mp4`    | Most compatible, recommended              |
+| MP4 (Apple) | `.m4v`    | Identical to MP4, common on Apple devices |
+| QuickTime   | `.mov`    | Common on macOS / iOS                     |
+| WebM        | `.webm`   | Open format, browser-native               |
+
+**Supported encodings:** H.264 (AVC), H.265 (HEVC), AV1, VP9.
+
+Files must be in a supported format because the original file is always served directly to the viewer. Transcoding (when enabled) only generates additional lower-quality versions for adaptive streaming; the original is never modified.
 
 ## Navigation
 
@@ -176,6 +189,8 @@ See [LDAP.md](./docs/LDAP.md) for setup instructions.
 
 ### Transcoding (Optional)
 
+When enabled, Fireshare will create lower quality versions of your original supported file type videos. Your viewers can then choose to play your videos at lower qualities that their internet can handle. Fireshare will also attempt to automatically downgrade the quality of a viewer who is constantly buffering.
+
 Transcoding is off by default. To enable it, set the following environment variables:
 
 ```
@@ -249,13 +264,18 @@ See [EnvironmentVariables.md](./docs/EnvironmentVariables.md) for the full list 
 
 Contributions are welcome. For larger changes, open an issue first to align on scope.
 
-1. Fork the repository
-2. Create a branch from `develop`
-3. Commit your changes
-4. Rebase on latest `develop`
-5. Open a pull request to `develop`
+1. Know how to code! **I DO NOT WANT VIBE CODERS SUBMITTING PRs**
+   AI assisted coding is fine if you can read, understand, and validate AI code.
+   _Asking AI to review itself doesn't count as reading, understanding, and validating AI code._
+2. Fork the repository
+3. Create a branch from `develop`
+4. Commit your changes
+5. Rebase on latest `develop`
+6. Open a pull request to `develop`
 
 For issues and feature requests, visit the [issue tracker](https://github.com/ShaneIsrael/fireshare/issues).
+
+**Please DO NOT open a pull request for a feature or addition that was not previously discussed with me. Pull requests that do this will be automatically closed.**
 
 ### Database Changes
 
