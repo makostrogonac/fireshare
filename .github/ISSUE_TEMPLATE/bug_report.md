@@ -3,9 +3,16 @@ name: Bug report
 about: Create a report to help us improve
 title: ''
 labels: bug
-assignees: Talon876, ShaneIsrael
+assignees: ShaneIsrael
 
 ---
+
+# READ FIRST 
+
+If this is an issue with installation and setup on **TrueNAS...** STOP.
+
+I cannot help with TrueNAS related issues. I do not have any experience with TrueNAS and the Fireshare TrueNAS app was not configured by me. Request assistance on a TrueNAS community forum. Issues related to TrueNAS will be closed without comment.
+______________
 
 **Describe the bug**
 A clear and concise description of what the bug is.
