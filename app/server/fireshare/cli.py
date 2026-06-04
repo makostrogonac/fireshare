@@ -677,7 +677,7 @@ def create_posters(regenerate, skip):
             if should_create_poster:
                 if not derived_path.exists():
                     derived_path.mkdir(parents=True)
-                poster_time = int(vi.duration * skip)
+                poster_time = int((vi.duration or 0) * skip)
                 util.create_poster(video_path, derived_path / "poster.jpg", poster_time)
             else:
                 logger.debug(f"Skipping creation of poster for video {vi.video_id} because it exists at {str(poster_path)}")
