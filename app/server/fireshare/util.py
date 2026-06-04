@@ -175,9 +175,9 @@ def video_id(path: Path, mb=16):
 
 def get_media_info(path):
     try:
-        cmd = f'ffprobe -v quiet -print_format json -show_entries stream {path}'
-        logger.debug(f"$ {cmd}")
-        data = json.loads(sp.check_output(cmd.split()).decode('utf-8'))
+        cmd = ['ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_entries', 'stream', str(path)]
+        logger.debug(f"$ {' '.join(cmd)}")
+        data = json.loads(sp.check_output(cmd).decode('utf-8'))
         return data['streams']
     except Exception as ex:
         logger.warning('Could not extract video info')
@@ -1361,9 +1361,9 @@ def _extract_date_from_metadata(file_path: Path):
         datetime object if a valid date was found in metadata, None otherwise
     """
     try:
-        cmd = f'ffprobe -v quiet -print_format json -show_entries format_tags {file_path}'
-        logger.debug(f"$ {cmd}")
-        data = json.loads(sp.check_output(cmd.split()).decode('utf-8'))
+        cmd = ['ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_entries', 'format_tags', str(file_path)]
+        logger.debug(f"$ {' '.join(cmd)}")
+        data = json.loads(sp.check_output(cmd).decode('utf-8'))
         
         tags = data.get('format', {}).get('tags', {})
         if not tags:
