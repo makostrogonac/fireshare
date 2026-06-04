@@ -8,7 +8,7 @@ from ..models import Video
 
 
 def secure_filename(filename):
-    clean = re.sub(r"[/\\?%*:|\"<>\x7F\x00-\x1F]", "-", filename)
+    clean = re.sub(r"[/\\?%*:|\"<>\x7F\x00-\x1F\s]", "-", filename)
     return clean
 
 

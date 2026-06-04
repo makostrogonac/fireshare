@@ -175,9 +175,9 @@ def video_id(path: Path, mb=16):
 
 def get_media_info(path):
     try:
-        cmd = f'ffprobe -v quiet -print_format json -show_entries stream {path}'
-        logger.debug(f"$ {cmd}")
-        data = json.loads(sp.check_output(cmd.split()).decode('utf-8'))
+        cmd = ['ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_entries', 'stream', str(path)]
+        logger.debug(f"$ {' '.join(cmd)}")
+        data = json.loads(sp.check_output(cmd).decode('utf-8'))
         return data['streams']
     except Exception as ex:
         logger.warning('Could not extract video info')
@@ -1361,9 +1361,9 @@ def _extract_date_from_metadata(file_path: Path):
         datetime object if a valid date was found in metadata, None otherwise
     """
     try:
-        cmd = f'ffprobe -v quiet -print_format json -show_entries format_tags {file_path}'
-        logger.debug(f"$ {cmd}")
-        data = json.loads(sp.check_output(cmd.split()).decode('utf-8'))
+        cmd = ['ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_entries', 'format_tags', str(file_path)]
+        logger.debug(f"$ {' '.join(cmd)}")
+        data = json.loads(sp.check_output(cmd).decode('utf-8'))
         
         tags = data.get('format', {}).get('tags', {})
         if not tags:
@@ -1402,6 +1402,68 @@ def _extract_date_from_metadata(file_path: Path):
         return None
     except Exception as ex:
         logger.debug(f"Failed to extract date from metadata: {ex}")
+        return None
+
+
+def _extract_date_from_image_exif(file_path: Path):
+    """
+    Extract creation date from image EXIF metadata using PIL.
+
+    Checks DateTimeOriginal (36867), DateTimeDigitized (36868), and DateTime (306).
+    """
+    try:
+        from PIL import Image as PILImage
+        with PILImage.open(str(file_path)) as img:
+            exif_data = img._getexif()
+            if not exif_data:
+                return None
+        # EXIF tag IDs for date fields in priority order
+        for tag_id in (36867, 36868, 306):
+            value = exif_data.get(tag_id)
+            if value:
+                try:
+                    parsed = datetime.strptime(value, '%Y:%m:%d %H:%M:%S')
+                    if 2000 <= parsed.year <= datetime.now().year + 1:
+                        logger.debug(f"Extracted date {parsed} from image EXIF tag {tag_id}")
+                        return parsed
+                except ValueError:
+                    continue
+        return None
+    except Exception as ex:
+        logger.debug(f"Failed to extract EXIF date from image: {ex}")
+        return None
+
+
+def extract_date_from_image_file(file_path: Path):
+    """
+    Extract a creation date from an image file.
+
+    Tries in order:
+    1. EXIF metadata (DateTimeOriginal, DateTimeDigitized, DateTime)
+    2. Filename date patterns
+    3. File modification time
+    """
+    file_path = Path(file_path)
+
+    if not file_path.exists():
+        logger.warning(f"Cannot extract date from non-existent file: {file_path}")
+        return None
+
+    exif_date = _extract_date_from_image_exif(file_path)
+    if exif_date:
+        return exif_date
+
+    filename_date = _extract_date_from_filename(file_path.name)
+    if filename_date:
+        logger.debug(f"Using filename date for {file_path.name}: {filename_date}")
+        return filename_date
+
+    try:
+        created_date = datetime.fromtimestamp(os.path.getmtime(file_path))
+        logger.debug(f"Using file mtime for {file_path.name}: {created_date}")
+        return created_date
+    except Exception as ex:
+        logger.warning(f"Failed to get file mtime for {file_path}: {ex}")
         return None
 
 

@@ -101,7 +101,7 @@ def public_upload_video():
     upload_folder = config['app_config']['public_upload_folder_name']
     if config['app_config'].get('allow_public_folder_selection', False):
         requested_folder = request.form.get('folder', '').strip()
-        if requested_folder and '/' not in requested_folder and '..' not in requested_folder:
+        if requested_folder and '/' not in requested_folder and '..' not in requested_folder and ' ' not in requested_folder:
             upload_folder = requested_folder
 
     if 'file' not in request.files:
@@ -174,7 +174,7 @@ def public_upload_videoChunked():
 
     if config['app_config'].get('allow_public_folder_selection', False):
         requested_folder = request.form.get('folder', '').strip()
-        if requested_folder and '/' not in requested_folder and '..' not in requested_folder:
+        if requested_folder and '/' not in requested_folder and '..' not in requested_folder and ' ' not in requested_folder:
             upload_folder = requested_folder
 
     upload_directory = paths['video'] / upload_folder
@@ -297,7 +297,7 @@ def upload_video():
 
     upload_folder = config['app_config']['admin_upload_folder_name']
     requested_folder = request.form.get('folder', '').strip()
-    if requested_folder and '/' not in requested_folder and '..' not in requested_folder:
+    if requested_folder and '/' not in requested_folder and '..' not in requested_folder and ' ' not in requested_folder:
         upload_folder = requested_folder
 
     if 'file' not in request.files:
@@ -341,7 +341,7 @@ def upload_videoChunked():
 
     upload_folder = config['app_config']['admin_upload_folder_name']
     requested_folder = request.form.get('folder', '').strip()
-    if requested_folder and '/' not in requested_folder and '..' not in requested_folder:
+    if requested_folder and '/' not in requested_folder and '..' not in requested_folder and ' ' not in requested_folder:
         upload_folder = requested_folder
 
     required_files = ['blob']

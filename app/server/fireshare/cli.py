@@ -677,7 +677,7 @@ def create_posters(regenerate, skip):
             if should_create_poster:
                 if not derived_path.exists():
                     derived_path.mkdir(parents=True)
-                poster_time = int(vi.duration * skip)
+                poster_time = int((vi.duration or 0) * skip)
                 util.create_poster(video_path, derived_path / "poster.jpg", poster_time)
             else:
                 logger.debug(f"Skipping creation of poster for video {vi.video_id} because it exists at {str(poster_path)}")
@@ -1182,8 +1182,8 @@ def scan_image(ctx, path, game_id, tag_ids, title):
             else:
                 logger.debug(f"Image {iid} already indexed")
         else:
-            created_at = datetime.fromtimestamp(os.path.getmtime(str(img_file)))
-            updated_at = datetime.fromtimestamp(os.path.getmtime(str(img_file)))
+            created_at = util.extract_date_from_image_file(img_file)
+            updated_at = created_at
             source_folder = rel_path.split('/')[0] if '/' in rel_path else None
             img = Image(image_id=iid, extension=img_file.suffix, path=rel_path,
                         available=True, created_at=created_at, updated_at=updated_at,
