@@ -3,15 +3,15 @@ import { getUrl } from '../common/utils'
 
 const URL = getUrl()
 
-const cancelToken = axios.CancelToken.source()
+const controller = new AbortController()
 
 const instance = axios.create({
   baseURL: URL,
   timeout: 10000,
 })
 
-instance.interceptors.request.use(async (config) => {
-  config.cancelToken = cancelToken.token
+instance.interceptors.request.use((config) => {
+  config.signal = controller.signal
   return config
 })
 

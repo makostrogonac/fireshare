@@ -1,6 +1,6 @@
 {
   "name": "fireshare",
-  "version": "1.6.14",
+  "version": "1.6.15",
   "private": true,
   "dependencies": {
     "@emotion/react": "^11.9.0",
@@ -9,7 +9,7 @@
     "@mui/icons-material": "^5.8.0",
     "@mui/material": "^5.8.1",
     "@videojs/react": "^10.0.0-beta.4",
-    "axios": "^0.27.2",
+    "axios": "^1.17.0",
     "fast-average-color": "^9.5.0",
     "framer-motion": "^12.34.3",
     "lodash": "^4.17.21",
