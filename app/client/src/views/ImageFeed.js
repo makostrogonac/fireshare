@@ -40,6 +40,7 @@ const ImageFeed = ({ authenticated, searchText, cardSize, selectedImageFolder, o
   const [randomized, setRandomized] = React.useState(false)
   const [randomizedImages, setRandomizedImages] = React.useState([])
   const [randomizeKey, setRandomizeKey] = React.useState(0)
+  const [sortKey, setSortKey] = React.useState(0)
   const [imageFolderList, setImageFolderList] = React.useState([])
   const [toolbarTarget, setToolbarTarget] = React.useState(null)
 
@@ -193,6 +194,8 @@ const ImageFeed = ({ authenticated, searchText, cardSize, selectedImageFolder, o
   const handleSortChange = (option) => {
     setSortOrder(option)
     setRandomized(false)
+    setSortKey((k) => k + 1)
+    window.scrollTo({ top: 0 })
   }
 
   const handleRandomize = () => {
@@ -401,7 +404,7 @@ const ImageFeed = ({ authenticated, searchText, cardSize, selectedImageFolder, o
                 {loading && <LoadingSpinner />}
                 {!loading && (
                   <ImageCards
-                    key={randomizeKey}
+                    key={`${randomizeKey}-${sortKey}`}
                     images={finalImages}
                     authenticated={authenticated}
                     feedView={!authenticated}
