@@ -143,7 +143,7 @@ def manual_rescan_dates():
     try:
         paths = current_app.config['PATHS']
         videos_path = paths["video"]
-        images_path = paths["image"]
+        images_path = paths.get("images")
 
         videos = Video.query.all()
         video_dates_updated = 0
@@ -154,7 +154,7 @@ def manual_rescan_dates():
                 video.recorded_at = recorded_at
                 video_dates_updated += 1
 
-        images = Image.query.all()
+        images = Image.query.all() if images_path else []
         image_dates_updated = 0
         for image in images:
             image_file_path = images_path / image.path
