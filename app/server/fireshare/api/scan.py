@@ -140,42 +140,41 @@ def manual_scan_dates():
 @demo_restrict
 def manual_rescan_dates():
     """Re-extract and overwrite recorded_at for all videos and created_at for all images."""
-    try:
-        paths = current_app.config['PATHS']
-        videos_path = paths["video"]
-        images_path = paths.get("images")
+    app = current_app._get_current_object()
 
-        videos = Video.query.all()
-        video_dates_updated = 0
-        for video in videos:
-            video_file_path = videos_path / video.path
-            recorded_at = util.extract_date_from_file(video_file_path)
-            if recorded_at:
-                video.recorded_at = recorded_at
-                video_dates_updated += 1
+    def run_rescan():
+        with app.app_context():
+            try:
+                paths = app.config['PATHS']
+                videos_path = paths["video"]
+                images_path = paths.get("images")
 
-        images = Image.query.all() if images_path else []
-        image_dates_updated = 0
-        for image in images:
-            image_file_path = images_path / image.path
-            created_at = util.extract_date_from_image_file(image_file_path)
-            if created_at:
-                image.created_at = created_at
-                image_dates_updated += 1
+                videos = Video.query.all()
+                video_dates_updated = 0
+                for video in videos:
+                    recorded_at = util.extract_date_from_file(videos_path / video.path)
+                    if recorded_at:
+                        video.recorded_at = recorded_at
+                        video_dates_updated += 1
 
-        db.session.commit()
+                images = Image.query.all() if images_path else []
+                image_dates_updated = 0
+                for image in images:
+                    created_at = util.extract_date_from_image_file(images_path / image.path)
+                    if created_at:
+                        image.created_at = created_at
+                        image_dates_updated += 1
 
-        return jsonify({
-            'success': True,
-            'videos_scanned': len(videos),
-            'video_dates_updated': video_dates_updated,
-            'images_scanned': len(images),
-            'image_dates_updated': image_dates_updated,
-        }), 200
+                db.session.commit()
+                logger.info(f"Rescan dates complete: {video_dates_updated}/{len(videos)} videos, {image_dates_updated}/{len(images)} images updated")
+            except Exception as e:
+                logger.error(f"Error rescanning dates: {e}")
 
-    except Exception as e:
-        logger.error(f"Error rescanning dates: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+    thread = threading.Thread(target=run_rescan)
+    thread.daemon = True
+    thread.start()
+
+    return jsonify({'success': True, 'message': 'Date rescan started in background'}), 200
 
 
 @api.route('/api/scan-games/status')

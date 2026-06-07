@@ -344,7 +344,7 @@ const Settings = () => {
       setAlert({
         open: true,
         type: 'success',
-        message: `Rescan complete! Updated ${response.data.video_dates_updated}/${response.data.videos_scanned} video dates and ${response.data.image_dates_updated}/${response.data.images_scanned} image dates.`,
+        message: 'Date rescan started. This may take a few minutes depending on library size.',
       })
     } catch (err) {
       setAlert({
