@@ -520,6 +520,9 @@ def get_image_dimensions(path: Path):
 # Cache for NVENC availability check to avoid repeated subprocess calls
 _nvenc_availability_cache = {}
 
+# Cache for NVENC 10-bit support checks
+_nvenc_10bit_cache = {}
+
 # Cache for dav1d decoder availability (None = unchecked, True/False = result)
 _dav1d_available_cache = None
 
@@ -826,22 +829,107 @@ def run_ffmpeg_with_progress(cmd, total_duration, timeout_seconds=None, data_pat
     return process
 
 
+def is_video_10bit(video_path):
+    """
+    Check if a source video uses a 10-bit pixel format (yuv420p10le, p010le, etc.).
+
+    Returns:
+        bool: True if the source video's pixel format indicates 10-bit or higher depth
+    """
+    try:
+        cmd = ['ffprobe', '-v', 'quiet', '-select_streams', 'v:0',
+               '-show_entries', 'stream=pix_fmt', '-of', 'csv=p=0', str(video_path)]
+        result = sp.run(cmd, capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            pix_fmt = result.stdout.strip().lower()
+            # Common 10/12-bit pixel formats
+            tenbit_formats = {'yuv420p10le', 'yuv422p10le', 'yuv444p10le',
+                              'p010le', 'p012le', 'yuv420p12le', 'yuv422p12le',
+                              'yuv444p12le', 'p016le', 'gray10le', 'gray12le'}
+            return pix_fmt in tenbit_formats
+    except Exception:
+        pass
+    return False
+
+
+def check_nvenc_10bit_support(encoder_name):
+    """
+    Check if an NVENC encoder supports 10-bit encoding (p010le pixel format).
+
+    Older NVIDIA GPUs (e.g. GTX 10xx / Pascal) only support 8-bit encoding via
+    h264_nvenc.  Turing+ (RTX 20xx) adds 10-bit h264_nvenc support.
+    AV1 NVENC (Ada Lovelace / RTX 40xx) always supports 10-bit.
+
+    The check works by attempting a fast null encode of a synthetic 10-bit
+    test frame.  Result is cached in _nvenc_10bit_cache.
+
+    Args:
+        encoder_name: NVENC encoder name (e.g. 'h264_nvenc', 'av1_nvenc')
+
+    Returns:
+        bool: True if the encoder accepts -pix_fmt p010le
+    """
+    if encoder_name in _nvenc_10bit_cache:
+        return _nvenc_10bit_cache[encoder_name]
+
+    try:
+        # Generate a tiny 10-bit yuv420p10le test frame with lavfi, then try to
+        # encode one frame with the NVENC encoder requesting p010le output.
+        cmd = [
+            'ffmpeg', '-v', 'error', '-y',
+            '-f', 'lavfi', '-i', 'color=c=black:s=64x64:r=1:d=0.1',
+            '-pix_fmt', 'yuv420p10le',
+            '-c:v', encoder_name,
+            '-pix_fmt', 'p010le',
+            '-frames:v', '1',
+            '-f', 'null', '-'
+        ]
+        result = sp.run(cmd, capture_output=True, text=True, timeout=15)
+        supported = result.returncode == 0
+        _nvenc_10bit_cache[encoder_name] = supported
+        if supported:
+            logger.debug(f"{encoder_name} supports 10-bit encoding (p010le)")
+        else:
+            logger.debug(f"{encoder_name} does NOT support 10-bit encoding — will force 8-bit output")
+        return supported
+    except Exception as ex:
+        logger.debug(f"Could not check 10-bit support for {encoder_name}: {ex}")
+        _nvenc_10bit_cache[encoder_name] = False
+        return False
+
+
 def _build_transcode_command(video_path, out_path, height, encoder, input_decoder=None):
-    """Build an ffmpeg command for transcoding with the given encoder."""
+    """Build an ffmpeg command for transcoding with the given encoder.
+
+    When the source video is 10-bit and the chosen NVENC encoder does not
+    support 10-bit output, automatically inserts ``-pix_fmt yuv420p`` so the
+    encode does not fail with a pixel-format error.
+    """
     cmd = ['ffmpeg', '-v', 'warning', '-stats', '-y']
     if input_decoder:
         cmd.extend(['-c:v', input_decoder])
     cmd.append('-i')
     cmd.append(str(video_path))
     cmd.extend(['-c:v', encoder['video_codec']])
-    
+
+    # --- 10-bit → 8-bit fallback for NVENC encoders that lack 10-bit support ---
+    video_codec = encoder['video_codec']
+    if video_codec.endswith('_nvenc') and is_video_10bit(video_path):
+        if not check_nvenc_10bit_support(video_codec):
+            logger.info(
+                f"Source is 10-bit but {video_codec} does not support 10-bit — "
+                f"forcing 8-bit output (yuv420p)"
+            )
+            cmd.extend(['-pix_fmt', 'yuv420p'])
+    # -------------------------------------------------------------------------
+
     if 'extra_args' in encoder:
         cmd.extend(encoder['extra_args'])
-    
+
     cmd.extend(['-vf', f'scale=-2:{height}'])
     cmd.extend(['-c:a', encoder['audio_codec'], '-b:a', encoder.get('audio_bitrate', '128k')])
     cmd.append(str(out_path))
-    
+
     return cmd
 
 def transcode_video_quality(video_path, out_path, height, use_gpu=False, timeout_seconds=None, encoder_preference='auto', data_path=None):

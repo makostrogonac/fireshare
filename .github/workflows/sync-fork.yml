@@ -1,0 +1,54 @@
+name: Sync Fork with Upstream
+
+on:
+  schedule:
+    # Runs every 6 hours — adjust as needed
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      upstream_branch:
+        description: 'Upstream branch to sync from'
+        required: true
+        default: 'main'
+
+jobs:
+  sync:
+    name: Sync from upstream
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/ShaneIsrael/fireshare.git
+          git fetch upstream
+
+      - name: Determine upstream branch
+        id: branch
+        run: |
+          UPSTREAM_BRANCH="${{ github.event.inputs.upstream_branch }}"
+          echo "branch=${UPSTREAM_BRANCH:-main}" >> "$GITHUB_OUTPUT"
+
+      - name: Merge upstream changes
+        run: |
+          git merge "upstream/${{ steps.branch.outputs.branch }}" \
+            --strategy-option theirs \
+            -m "Auto-sync from upstream/${{ steps.branch.outputs.branch }}"
+
+      - name: Push to fork
+        run: git push origin main
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::Sync failed. Manual intervention required — resolve conflicts."
