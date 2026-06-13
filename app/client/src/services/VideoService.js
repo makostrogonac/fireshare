@@ -139,6 +139,9 @@ const service = {
   rescanDates() {
     return Api().get('/api/manual/rescan-dates')
   },
+  scanFolders() {
+    return Api().get('/api/manual/scan-folders')
+  },
   getGameSuggestion(videoId) {
     return Api().get(`/api/videos/${videoId}/game/suggestion`)
   },

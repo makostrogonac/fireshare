@@ -27,6 +27,7 @@ import ChevronRightIcon from '@mui/icons-material/ChevronRight'
 import SportsEsportsIcon from '@mui/icons-material/SportsEsports'
 import LocalOfferIcon from '@mui/icons-material/LocalOffer'
 import FolderOpenIcon from '@mui/icons-material/FolderOpen'
+import FolderCopyIcon from '@mui/icons-material/FolderCopy'
 import PhotoLibraryIcon from '@mui/icons-material/PhotoLibrary'
 
 import { useMediaQuery, useTheme } from '@mui/material'
@@ -38,7 +39,6 @@ import Search from './Search'
 import LightTooltip from '../ui/LightTooltip'
 import SnackbarAlert from '../alert/SnackbarAlert'
 import { getSetting, setSetting } from '../../common/utils'
-import SliderWrapper from '../ui/SliderWrapper'
 import GameScanStatus from './GameScanStatus'
 import TranscodingStatus from './TranscodingStatus'
 import FolderSuggestionInline from './FolderSuggestionInline'
@@ -53,7 +53,6 @@ import ReleaseNotesDialog from '../modal/ReleaseNotesDialog'
 
 const drawerWidth = 240
 const minimizedDrawerWidth = 57
-const CARD_SIZE_DEFAULT = 375
 const CARD_SIZE_MULTIPLIER = 2
 const DEMO_BANNER_HEIGHT = 34
 
@@ -62,6 +61,7 @@ const allPages = [
   { title: 'Images', icon: <PhotoLibraryIcon />, href: '/images', private: false },
   { title: 'Games', icon: <SportsEsportsIcon />, href: '/games', private: false },
   { title: 'Tags', icon: <LocalOfferIcon />, href: '/tags', private: false },
+  { title: 'Folders', icon: <FolderCopyIcon />, href: '/folders', private: false },
   { title: 'File Manager', icon: <FolderOpenIcon />, href: '/files', private: true },
   { title: 'Settings', icon: <SettingsIcon />, href: '/settings', private: true },
 ]
@@ -160,7 +160,6 @@ function MainNavbar({
   const [mobileSearchKey, setMobileSearchKey] = React.useState(0)
   const [searchText, setSearchText] = React.useState()
   const [open, setOpen] = React.useState(!collapsed)
-  const [cardSize, setCardSize] = React.useState(getSetting('cardSize') || CARD_SIZE_DEFAULT)
 
   const [featureAlertOpen, setFeatureAlertOpen] = React.useState(false)
 
@@ -236,7 +235,7 @@ function MainNavbar({
     setImageFolders(folderList)
   }, [])
 
-const [uiConfig, setUiConfig] = React.useState(() => getSetting('ui_config') || {})
+  const [uiConfig, setUiConfig] = React.useState(() => getSetting('ui_config') || {})
 
   React.useEffect(() => {
     const handleUiConfigUpdate = () => setUiConfig(getSetting('ui_config') || {})
@@ -250,6 +249,7 @@ const [uiConfig, setUiConfig] = React.useState(() => getSetting('ui_config') || 
     if (p.href === '/images' && uiConfig.show_images === false) return false
     if (p.href === '/games' && uiConfig.show_games === false) return false
     if (p.href === '/tags' && uiConfig.show_tags === false) return false
+    if (p.href === '/folders' && uiConfig.show_folders === false) return false
     return true
   })
 
@@ -269,12 +269,6 @@ const [uiConfig, setUiConfig] = React.useState(() => getSetting('ui_config') || 
     } catch (err) {
       console.error(err)
     }
-  }
-
-  const handleCardSizeChange = (_e, newValue) => {
-    const newSize = Math.round((newValue / 100) * CARD_SIZE_DEFAULT * CARD_SIZE_MULTIPLIER)
-    setCardSize(newSize)
-    setSetting('cardSize', newSize)
   }
 
   const memoizedHandleAlert = React.useCallback((alert) => {
@@ -473,22 +467,6 @@ const [uiConfig, setUiConfig] = React.useState(() => getSetting('ui_config') || 
             return null
           })}
         </List>
-        {cardSlider && open && !isMobile ? (
-          <>
-            <Divider />
-            <Box sx={{ display: 'flex', p: 2 }} justifyContent="center">
-              <SliderWrapper
-                width={open ? 150 : 10}
-                h
-                cardSize={cardSize}
-                defaultCardSize={CARD_SIZE_DEFAULT}
-                cardSizeMultiplier={CARD_SIZE_MULTIPLIER}
-                onChangeCommitted={handleCardSizeChange}
-                vertical={!open}
-              />
-            </Box>
-          </>
-        ) : null}
         <Divider />
         <UploadCard
           ref={registerUploadCard}
@@ -695,10 +673,20 @@ const [uiConfig, setUiConfig] = React.useState(() => getSetting('ui_config') || 
                   </IconButton>
                 )}
 
-                {/* Desktop: left spacer + centered search */}
-                {!isMobile && <Box sx={{ flex: 1 }} />}
+                {/* Mobile: left content (when search not open) */}
+                {isMobile && !mobileSearchOpen && (
+                  <Box
+                    sx={{ flex: 1, display: 'flex', alignItems: 'center', minWidth: 0, overflow: 'hidden' }}
+                    id="navbar-toolbar-left-mobile"
+                  />
+                )}
+
+                {/* Desktop: left content + centered search */}
+                {!isMobile && (
+                  <Box sx={{ flex: '1 0 auto', display: 'flex', alignItems: 'center' }} id="navbar-toolbar-left" />
+                )}
                 {searchable && !isMobile && (
-                  <Box id="navbar-search-container" sx={{ width: 520, flexShrink: 1, minWidth: 0, mr: 1, ml: 2 }}>
+                  <Box id="navbar-search-container" sx={{ width: 520, flexShrink: 3, minWidth: 0, mr: 1, ml: 2 }}>
                     <Search placeholder={searchPlaceholder} searchHandler={(value) => setSearchText(value)} />
                   </Box>
                 )}
@@ -706,7 +694,7 @@ const [uiConfig, setUiConfig] = React.useState(() => getSetting('ui_config') || 
                 {/* Right controls — always in DOM so portal target stays valid */}
                 <Box
                   sx={{
-                    flex: 1,
+                    flex: isMobile ? '0 0 auto' : '1 0 auto',
                     display: isMobile && mobileSearchOpen ? 'none' : 'flex',
                     justifyContent: 'flex-end',
                     alignItems: 'center',
@@ -803,7 +791,7 @@ const [uiConfig, setUiConfig] = React.useState(() => getSetting('ui_config') || 
           authenticated,
           isAdmin,
           searchText,
-          cardSize,
+          cardSize: 300,
           selectedFolder: effectiveFolder,
           onFolderChange: handleFolderChange,
           onFoldersLoaded: handleFoldersLoaded,

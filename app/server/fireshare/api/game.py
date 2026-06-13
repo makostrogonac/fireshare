@@ -496,7 +496,8 @@ def delete_game(steamgriddb_id):
     if delete_videos and video_links:
         # Delete all associated videos
         paths = current_app.config['PATHS']
-        from ..models import VideoInfo, VideoView, VideoTagLink
+        from ..models import VideoInfo, VideoView, VideoTagLink, MediaFolder
+        orphaned_folder_ids = set()
         for link in video_links:
             video = link.video
             if video is None:
@@ -504,6 +505,9 @@ def delete_game(steamgriddb_id):
                 db.session.delete(link)
                 continue
             logger.info(f"Deleting video: {video.video_id}")
+
+            if video.folder_id is not None:
+                orphaned_folder_ids.add(video.folder_id)
 
             file_path = paths['video'] / video.path
             link_path = paths['processed'] / 'video_links' / f"{video.video_id}{video.extension}"
@@ -546,6 +550,10 @@ def delete_game(steamgriddb_id):
     # Delete game from database
     db.session.delete(game)
     db.session.commit()
+
+    if delete_videos and video_links:
+        for folder_id in orphaned_folder_ids:
+            MediaFolder.cleanup_if_orphaned(folder_id, Video)
 
     logger.info(f"Successfully deleted game {game.name}")
     return Response(status=200)

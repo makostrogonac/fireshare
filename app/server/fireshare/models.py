@@ -1,4 +1,5 @@
 import json
+import uuid as uuid_lib
 from datetime import datetime
 from flask_login import UserMixin
 from . import db
@@ -23,6 +24,7 @@ class Video(db.Model):
     updated_at = db.Column(db.DateTime())
     recorded_at = db.Column(db.DateTime(), nullable=True)  # Extracted from filename
     source_folder = db.Column(db.String(256), nullable=True)  # Original folder name for game detection
+    folder_id = db.Column(db.Integer, db.ForeignKey("media_folder.id"), nullable=True)
 
     info      = db.relationship("VideoInfo", back_populates="video", uselist=False, lazy="joined")
 
@@ -308,6 +310,7 @@ class Image(db.Model):
     created_at    = db.Column(db.DateTime())
     updated_at    = db.Column(db.DateTime())
     source_folder = db.Column(db.String(256), nullable=True)
+    folder_id     = db.Column(db.Integer, db.ForeignKey("media_folder.id"), nullable=True)
 
     info          = db.relationship("ImageInfo", back_populates="image", uselist=False, lazy="joined")
 
@@ -431,6 +434,46 @@ class ImageView(db.Model):
 
     def __repr__(self):
         return "<ImageView {} {}>".format(self.image_id, self.ip_address)
+
+
+class MediaFolder(db.Model):
+    __tablename__ = "media_folder"
+    __table_args__ = (
+        db.UniqueConstraint("path", "media_type", name="uq_media_folder_path_media_type"),
+    )
+
+    id         = db.Column(db.Integer, primary_key=True)
+    uuid       = db.Column(db.String(32), unique=True, index=True, nullable=False, default=lambda: uuid_lib.uuid4().hex)
+    path       = db.Column(db.String(2048), index=True, nullable=False)
+    media_type = db.Column(db.String(16), nullable=False)
+    private    = db.Column(db.Boolean, default=True)
+    available  = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime())
+    updated_at = db.Column(db.DateTime())
+
+    def json(self):
+        import os
+        name = os.path.basename(self.path.rstrip('/')) or self.path
+        return {
+            "uuid": self.uuid,
+            "name": name,
+            "media_type": self.media_type,
+            "private": self.private,
+            "available": self.available,
+        }
+
+    @staticmethod
+    def cleanup_if_orphaned(folder_id, model):
+        """Delete a MediaFolder if it has no remaining members of the given model (Video or Image)."""
+        if folder_id is None:
+            return
+        remaining = model.query.filter_by(folder_id=folder_id).count()
+        if remaining == 0:
+            MediaFolder.query.filter_by(id=folder_id).delete()
+            db.session.commit()
+
+    def __repr__(self):
+        return "<MediaFolder {} {} ({})>".format(self.uuid, self.path, self.media_type)
 
 
 class TranscodeJob(db.Model):

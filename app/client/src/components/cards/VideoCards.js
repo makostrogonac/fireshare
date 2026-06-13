@@ -195,8 +195,8 @@ const VideoCards = ({
             sx={{
               display: 'grid',
               width: isSingleColumn ? 'calc(100% + 48px)' : '100%',
-              mx: isSingleColumn ? '-24px' : 0,
-              gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${size}px), 1fr))`,
+              justifyContent: isSingleColumn ? 'center' : 'start',
+              gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${size}px), ${size}px))`,
               gap: 2,
             }}
           >

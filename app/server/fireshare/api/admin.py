@@ -13,7 +13,7 @@ from flask_login import login_required, current_user
 from werkzeug.security import generate_password_hash
 
 from .. import db, logger, util
-from ..models import Video, VideoInfo, VideoView, GameMetadata, VideoGameLink, VideoTagLink, Image, ImageInfo, ImageGameLink, ImageTagLink, ImageView, TranscodeJob
+from ..models import Video, VideoInfo, VideoView, GameMetadata, VideoGameLink, VideoTagLink, Image, ImageInfo, ImageGameLink, ImageTagLink, ImageView, TranscodeJob, MediaFolder
 from . import api
 from .transcoding import _is_pid_running
 from .scan import _game_scan_state
@@ -401,6 +401,7 @@ def bulk_delete_files():
         file_path = paths['video'] / video.path
         link_path = paths['processed'] / 'video_links' / f"{vid_id}{video.extension}"
         derived_path = paths['processed'] / 'derived' / vid_id
+        folder_id = video.folder_id
 
         try:
             VideoInfo.query.filter_by(video_id=vid_id).delete()
@@ -409,6 +410,8 @@ def bulk_delete_files():
             VideoView.query.filter_by(video_id=vid_id).delete()
             Video.query.filter_by(video_id=vid_id).delete()
             db.session.commit()
+
+            MediaFolder.cleanup_if_orphaned(folder_id, Video)
 
             try:
                 if file_path.exists():
@@ -426,6 +429,17 @@ def bulk_delete_files():
             results['errors'].append({'video_id': vid_id, 'error': str(e)})
 
     return jsonify(results)
+
+
+def _get_or_create_media_folder(dirname, media_type):
+    folder = MediaFolder.query.filter_by(path=dirname, media_type=media_type).first()
+    if folder:
+        return folder
+    now = datetime.utcnow()
+    folder = MediaFolder(path=dirname, media_type=media_type, private=True, created_at=now, updated_at=now)
+    db.session.add(folder)
+    db.session.flush()
+    return folder
 
 
 @api.route('/api/admin/files/bulk-move', methods=['POST'])
@@ -482,6 +496,7 @@ def bulk_move_files():
             os.symlink(new_file_path.absolute(), link_path)
 
             video.path = new_path
+            video.folder_id = _get_or_create_media_folder(target_folder.split('/')[0], "video").id
 
             from ..models import FolderRule
             folder_rule = FolderRule.query.filter_by(folder_path=target_folder).first()
@@ -582,9 +597,11 @@ def delete_video_folder():
             folder_path.rmdir()
             results['deleted'].append(folder_name)
             logging.info(f"Deleted empty folder: {folder_path}")
+            MediaFolder.query.filter_by(path=folder_name, media_type="video").delete()
         except Exception as e:
             results['errors'].append({'folder': folder_name, 'error': str(e)})
 
+    db.session.commit()
     return jsonify(results)
 
 
@@ -974,6 +991,7 @@ def bulk_delete_images():
             results['errors'].append({'image_id': img_id, 'error': 'Not found'})
             continue
 
+        folder_id = img.folder_id
         try:
             # Remove files
             if image_directory:
@@ -994,6 +1012,8 @@ def bulk_delete_images():
             ImageInfo.query.filter_by(image_id=img_id).delete()
             Image.query.filter_by(image_id=img_id).delete()
             db.session.commit()
+
+            MediaFolder.cleanup_if_orphaned(folder_id, Image)
             results['deleted'].append(img_id)
         except Exception as e:
             db.session.rollback()
@@ -1060,6 +1080,7 @@ def bulk_move_images():
             os.symlink(new_file_path.absolute(), link_path)
 
             img.path = new_path
+            img.folder_id = _get_or_create_media_folder(target_folder.split('/')[0], "image").id
             db.session.commit()
             results['moved'].append(img_id)
         except Exception as e:
@@ -1217,7 +1238,9 @@ def delete_image_folder():
             folder_path.rmdir()
             results['deleted'].append(folder_name)
             logging.info(f"Deleted empty image folder: {folder_path}")
+            MediaFolder.query.filter_by(path=folder_name, media_type="image").delete()
         except Exception as e:
             results['errors'].append({'folder': folder_name, 'error': str(e)})
 
+    db.session.commit()
     return jsonify(results)

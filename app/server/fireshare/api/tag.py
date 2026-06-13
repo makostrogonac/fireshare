@@ -121,6 +121,7 @@ def delete_tag(tag_id):
 
     video_links = VideoTagLink.query.filter_by(tag_id=tag_id).all()
 
+    orphaned_folder_ids = set()
     if delete_videos:
         paths = current_app.config['PATHS']
         for link in video_links:
@@ -128,6 +129,8 @@ def delete_tag(tag_id):
             if video is None:
                 db.session.delete(link)
                 continue
+            if video.folder_id is not None:
+                orphaned_folder_ids.add(video.folder_id)
             file_path = paths['video'] / video.path
             link_path = paths['processed'] / 'video_links' / f"{video.video_id}{video.extension}"
             derived_path = paths['processed'] / 'derived' / video.video_id
@@ -151,6 +154,12 @@ def delete_tag(tag_id):
 
     db.session.delete(tag)
     db.session.commit()
+
+    if delete_videos:
+        from ..models import MediaFolder
+        for folder_id in orphaned_folder_ids:
+            MediaFolder.cleanup_if_orphaned(folder_id, Video)
+
     return Response(status=200)
 
 

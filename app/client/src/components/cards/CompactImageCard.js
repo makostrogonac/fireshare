@@ -42,6 +42,16 @@ const CompactImageCard = ({
   const [imgRetryKey, setImgRetryKey] = React.useState(0)
   const retryTimeoutRef = React.useRef(null)
   const retryCountRef = React.useRef(0)
+  const [titleHover, setTitleHover] = React.useState(false)
+  const [titleOverflowAmount, setTitleOverflowAmount] = React.useState(0)
+  const titleRef = React.useRef(null)
+
+  React.useEffect(() => {
+    if (!titleHover) return
+    const el = titleRef.current
+    if (!el) return
+    setTitleOverflowAmount(Math.max(0, el.scrollWidth - el.clientWidth))
+  }, [titleHover, title])
   const MAX_RETRIES = 20
 
   React.useEffect(() => {
@@ -114,7 +124,7 @@ const CompactImageCard = ({
           width: '100%',
           height: '100%',
           bgcolor: '#00000066',
-          borderRadius: { xs: 0, sm: '12px' },
+          borderRadius: '12px',
           overflow: 'hidden',
           position: 'relative',
           display: 'flex',
@@ -128,7 +138,7 @@ const CompactImageCard = ({
               position: 'absolute',
               inset: 0,
               border: '2px solid #2684FF',
-              borderRadius: { xs: 0, sm: '12px' },
+              borderRadius: '12px',
               zIndex: 10,
               pointerEvents: 'none',
             }}
@@ -296,6 +306,8 @@ const CompactImageCard = ({
 
         {/* Info section below thumbnail */}
         <Box
+          onMouseEnter={() => setTitleHover(true)}
+          onMouseLeave={() => setTitleHover(false)}
           sx={{
             display: 'flex',
             alignItems: 'stretch',
@@ -327,17 +339,36 @@ const CompactImageCard = ({
           {/* Text info */}
           <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
             <Typography
+              ref={titleRef}
               sx={{
                 fontWeight: 700,
                 fontSize: 16,
                 lineHeight: 1.3,
                 color: 'white',
                 overflow: 'hidden',
-                textOverflow: 'ellipsis',
+                textOverflow: titleHover && titleOverflowAmount > 0 ? 'clip' : 'ellipsis',
                 whiteSpace: 'nowrap',
               }}
             >
-              {title}
+              {titleHover && titleOverflowAmount > 0 ? (
+                <Box
+                  component="span"
+                  sx={{
+                    display: 'inline-block',
+                    whiteSpace: 'nowrap',
+                    animation: `title-marquee-${image.image_id} 6s ease-in-out infinite`,
+                    [`@keyframes title-marquee-${image.image_id}`]: {
+                      '0%, 10%': { transform: 'translateX(0)' },
+                      '45%, 55%': { transform: `translateX(-${titleOverflowAmount}px)` },
+                      '90%, 100%': { transform: 'translateX(0)' },
+                    },
+                  }}
+                >
+                  {title}
+                </Box>
+              ) : (
+                title
+              )}
             </Typography>
 
             {game?.name && (

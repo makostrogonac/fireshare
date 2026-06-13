@@ -7,7 +7,7 @@ import click
 from datetime import datetime
 from flask import current_app, request
 from fireshare import create_app, db, util, logger
-from fireshare.models import User, Video, VideoInfo, FolderRule, VideoGameLink, VideoTagLink, Image, ImageInfo, ImageGameLink, ImageTagLink, ImageFolderRule
+from fireshare.models import User, Video, VideoInfo, FolderRule, VideoGameLink, VideoTagLink, Image, ImageInfo, ImageGameLink, ImageTagLink, ImageFolderRule, MediaFolder
 from werkzeug.security import generate_password_hash
 from pathlib import Path
 from sqlalchemy import func
@@ -174,6 +174,73 @@ def get_public_watch_url(video_id, config, host):
     else:
         return print("--Unable to post to Discord--\nPlease check that your DOMAIN env variable is set correctly or that you have a shareable link domain set in your Admin settings.")
     
+def _get_or_create_media_folder(folder_cache, dirname, media_type):
+    """Get or create a MediaFolder for (dirname, media_type), using folder_cache to avoid duplicate queries/inserts."""
+    key = (dirname, media_type)
+    folder = folder_cache.get(key)
+    if folder:
+        return folder
+    folder = MediaFolder.query.filter_by(path=dirname, media_type=media_type).first()
+    if not folder:
+        now = datetime.utcnow()
+        folder = MediaFolder(path=dirname, media_type=media_type, private=True, available=True,
+                              created_at=now, updated_at=now)
+        db.session.add(folder)
+        db.session.flush()
+        logger.info(f"Created MediaFolder '{dirname}' (media_type={media_type})")
+    folder_cache[key] = folder
+    return folder
+
+
+def _reconcile_media_folders(media_type, model, snapshot):
+    """
+    Reconcile MediaFolder records after a scan.
+
+    snapshot: dict mapping row id -> previous folder_id (before this scan's reassignments)
+    """
+    folders = MediaFolder.query.filter_by(media_type=media_type).all()
+    folders_by_id = {f.id: f for f in folders}
+
+    for folder in folders:
+        has_available_member = db.session.query(model.id).filter(
+            model.folder_id == folder.id, model.available == True  # noqa: E712
+        ).first() is not None
+        if has_available_member:
+            continue
+
+        # Folder lost all available members. Determine where its previous members went.
+        prev_member_ids = [rid for rid, prev_fid in snapshot.items() if prev_fid == folder.id]
+        if not prev_member_ids:
+            folder.available = False
+            folder.updated_at = datetime.utcnow()
+            continue
+
+        new_folder_ids = set()
+        for rid in prev_member_ids:
+            row = model.query.get(rid)
+            if row is None:
+                continue
+            if row.folder_id is not None and row.folder_id != folder.id:
+                new_folder_ids.add(row.folder_id)
+
+        if len(new_folder_ids) == 1:
+            new_folder_id = next(iter(new_folder_ids))
+            new_folder = folders_by_id.get(new_folder_id)
+            if new_folder and new_folder.id != folder.id:
+                # Re-point all rows currently pointing at the new folder to the old folder
+                model.query.filter_by(folder_id=new_folder.id).update({"folder_id": folder.id})
+                folder.path = new_folder.path
+                folder.updated_at = datetime.utcnow()
+                db.session.flush()
+                db.session.delete(new_folder)
+                folders_by_id.pop(new_folder_id, None)
+                continue
+
+        # Zero or multiple destination folders, or couldn't resolve - mark unavailable
+        folder.available = False
+        folder.updated_at = datetime.utcnow()
+
+
 @click.group()
 def cli():
     pass
@@ -240,15 +307,26 @@ def scan_videos(root):
         
         video_rows = Video.query.all()
 
+        # Snapshot existing folder assignments before reassigning, for reconciliation
+        folder_snapshot = {vr.id: vr.folder_id for vr in video_rows}
+        folder_cache = {}
+
         new_videos = []
         for vf in video_files:
-            path = str(vf.relative_to(videos_path)) 
+            path = str(vf.relative_to(videos_path))
             video_id = util.video_id(vf)
+            dirname = os.path.dirname(path)
+            top_level = dirname.split(os.sep)[0] if dirname else None
             existing = next((vr for vr in video_rows if vr.video_id == video_id), None)
             duplicate = next((dvr for dvr in new_videos if dvr.video_id == video_id), None)
             if duplicate:
                 logger.debug(f"Found duplicate video {video_id} as {str(path)}, skipping...")
             elif existing:
+                if path == existing.path:
+                    folder = _get_or_create_media_folder(folder_cache, top_level, "video") if top_level else None
+                    folder_id = folder.id if folder else None
+                    if existing.folder_id != folder_id:
+                        db.session.query(Video).filter_by(video_id=existing.video_id).update({ "folder_id": folder_id })
                 if not existing.available:
                     logger.debug(f"Updating Video {video_id}, available=True")
                     db.session.query(Video).filter_by(video_id=existing.video_id).update({ "available": True })
@@ -261,13 +339,14 @@ def scan_videos(root):
                     logger.debug(f"Updating Video {video_id}, updated_at={updated_at}")
                     db.session.query(Video).filter_by(video_id=existing.video_id).update({ "updated_at": updated_at })
             else:
+                folder = _get_or_create_media_folder(folder_cache, top_level, "video") if top_level else None
                 created_at = datetime.fromtimestamp(os.path.getmtime(f"{videos_path}/{path}"))
                 updated_at = datetime.fromtimestamp(os.path.getmtime(f"{videos_path}/{path}"))
                 recorded_at = util.extract_date_from_file(vf)
-                v = Video(video_id=video_id, extension=vf.suffix, path=path, available=True, created_at=created_at, updated_at=updated_at, recorded_at=recorded_at)
+                v = Video(video_id=video_id, extension=vf.suffix, path=path, available=True, created_at=created_at, updated_at=updated_at, recorded_at=recorded_at, folder_id=folder.id if folder else None)
                 logger.info(f"Adding new Video {video_id} at {str(path)} (created {created_at.isoformat()}, updated {updated_at.isoformat()}, recorded {recorded_at.isoformat() if recorded_at else 'N/A'})")
                 new_videos.append(v)
-        
+
         if new_videos:
             db.session.add_all(new_videos)
         else:
@@ -402,6 +481,10 @@ def scan_videos(root):
             if not file_path.exists():
                 logger.warning(f"Video {ev.video_id} at {file_path} was not found")
                 db.session.query(Video).filter_by(video_id=ev.video_id).update({ "available": False})
+        db.session.commit()
+
+        # Reconcile MediaFolder records (handle renamed/moved/removed folders)
+        _reconcile_media_folders("video", Video, folder_snapshot)
         db.session.commit()
 
 @cli.command()
@@ -1037,10 +1120,19 @@ def scan_images(root):
         logger.info(f"Found {len(image_files)} image file(s)")
 
         image_rows = Image.query.all()
+
+        # Snapshot existing folder assignments before reassigning, for reconciliation
+        folder_snapshot = {ir.id: ir.folder_id for ir in image_rows}
+        folder_cache = {}
+
         new_images = []
         for img_file in image_files:
             rel_path = str(img_file.relative_to(images_path))
             iid = util.image_id(img_file)
+            dirname = os.path.dirname(rel_path)
+            top_level = dirname.split(os.sep)[0] if dirname else None
+            folder = _get_or_create_media_folder(folder_cache, top_level, "image") if top_level else None
+            folder_id = folder.id if folder else None
             existing = next((ir for ir in image_rows if ir.image_id == iid), None)
             duplicate = next((ni for ni in new_images if ni.image_id == iid), None)
             if duplicate:
@@ -1048,6 +1140,8 @@ def scan_images(root):
             elif existing:
                 if not existing.available:
                     db.session.query(Image).filter_by(image_id=iid).update({"available": True})
+                if existing.folder_id != folder_id:
+                    db.session.query(Image).filter_by(image_id=iid).update({"folder_id": folder_id})
                 # Regenerate missing WebP/thumbnail for existing images
                 info = ImageInfo.query.filter_by(image_id=iid).first()
                 if info and (not info.has_webp or not info.has_thumbnail):
@@ -1079,7 +1173,7 @@ def scan_images(root):
                 source_folder = rel_path.split('/')[0] if '/' in rel_path else None
                 img = Image(image_id=iid, extension=img_file.suffix, path=rel_path,
                             available=True, created_at=created_at, updated_at=updated_at,
-                            source_folder=source_folder)
+                            source_folder=source_folder, folder_id=folder_id)
                 logger.info(f"Adding new Image {iid} at {rel_path}")
                 new_images.append(img)
 
@@ -1154,6 +1248,11 @@ def scan_images(root):
                 logger.warning(f"Image {ei.image_id} at {file_path} not found, marking unavailable")
                 db.session.query(Image).filter_by(image_id=ei.image_id).update({"available": False})
         db.session.commit()
+
+        # Reconcile MediaFolder records (handle renamed/moved/removed folders)
+        _reconcile_media_folders("image", Image, folder_snapshot)
+        db.session.commit()
+
         logger.info("Image scan complete")
 
 

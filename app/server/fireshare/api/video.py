@@ -17,7 +17,7 @@ from sqlalchemy import func
 from sqlalchemy.sql import text
 
 from .. import db, logger, util
-from ..models import Video, VideoInfo, VideoView, VideoGameLink, VideoTagLink, FolderRule
+from ..models import Video, VideoInfo, VideoView, VideoGameLink, VideoTagLink, FolderRule, MediaFolder
 from . import api
 from .helpers import get_video_path, add_cache_headers, add_poster_cache_headers
 from .decorators import demo_restrict
@@ -441,12 +441,16 @@ def delete_video(id):
         link_path = paths['processed'] / 'video_links' / f"{id}{video.extension}"
         derived_path = paths['processed'] / 'derived' / id
 
+        folder_id = video.folder_id
+
         VideoInfo.query.filter_by(video_id=id).delete()
         VideoGameLink.query.filter_by(video_id=id).delete()
         VideoTagLink.query.filter_by(video_id=id).delete()
         VideoView.query.filter_by(video_id=id).delete()
         Video.query.filter_by(video_id=id).delete()
         db.session.commit()
+
+        MediaFolder.cleanup_if_orphaned(folder_id, Video)
 
         try:
             if file_path.exists():

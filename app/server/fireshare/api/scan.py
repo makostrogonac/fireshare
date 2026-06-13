@@ -11,7 +11,7 @@ from flask_login import login_required, current_user
 
 from .. import db, logger, util
 from ..constants import DEFAULT_CONFIG
-from ..models import Video, VideoInfo, VideoGameLink, GameMetadata, FolderRule, Image, ImageGameLink, ImageFolderRule
+from ..models import Video, VideoInfo, VideoGameLink, GameMetadata, FolderRule, Image, ImageGameLink, ImageFolderRule, MediaFolder
 from . import api
 from .helpers import get_steamgriddb_api_key
 from .decorators import demo_restrict
@@ -175,6 +175,71 @@ def manual_rescan_dates():
     thread.start()
 
     return jsonify({'success': True, 'message': 'Date rescan started in background'}), 200
+
+
+def _get_or_create_media_folder(folder_cache, dirname, media_type):
+    key = (dirname, media_type)
+    folder = folder_cache.get(key)
+    if folder:
+        return folder
+    folder = MediaFolder.query.filter_by(path=dirname, media_type=media_type).first()
+    if not folder:
+        now = datetime.utcnow()
+        folder = MediaFolder(path=dirname, media_type=media_type, private=True, available=True,
+                              created_at=now, updated_at=now)
+        db.session.add(folder)
+        db.session.flush()
+    folder_cache[key] = folder
+    return folder
+
+
+@api.route('/api/manual/scan-folders')
+@login_required
+@demo_restrict
+def manual_scan_folders():
+    """Re-derive top-level folder assignments for all videos/images and clean up orphaned folders."""
+    try:
+        folder_cache = {}
+        reassigned = 0
+
+        for video in Video.query.filter_by(available=True).all():
+            dirname = os.path.dirname(video.path)
+            top_level = dirname.split(os.sep)[0] if dirname else None
+            folder = _get_or_create_media_folder(folder_cache, top_level, "video") if top_level else None
+            folder_id = folder.id if folder else None
+            if video.folder_id != folder_id:
+                video.folder_id = folder_id
+                reassigned += 1
+
+        for image in Image.query.filter_by(available=True).all():
+            dirname = os.path.dirname(image.path)
+            top_level = dirname.split(os.sep)[0] if dirname else None
+            folder = _get_or_create_media_folder(folder_cache, top_level, "image") if top_level else None
+            folder_id = folder.id if folder else None
+            if image.folder_id != folder_id:
+                image.folder_id = folder_id
+                reassigned += 1
+
+        db.session.commit()
+
+        removed = 0
+        for folder in MediaFolder.query.all():
+            model = Video if folder.media_type == "video" else Image
+            if model.query.filter_by(folder_id=folder.id).count() == 0:
+                MediaFolder.query.filter_by(id=folder.id).delete()
+                removed += 1
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'reassigned': reassigned,
+            'folders_removed': removed,
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error scanning folders: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @api.route('/api/scan-games/status')

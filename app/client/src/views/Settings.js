@@ -32,6 +32,7 @@ import CalendarMonthIcon from '@mui/icons-material/CalendarMonth'
 import UpdateIcon from '@mui/icons-material/Update'
 import MoreVertIcon from '@mui/icons-material/MoreVert'
 import FolderIcon from '@mui/icons-material/Folder'
+import FolderCopyIcon from '@mui/icons-material/FolderCopy'
 import ImageIcon from '@mui/icons-material/Image'
 import CloseIcon from '@mui/icons-material/Close'
 import VisibilityIcon from '@mui/icons-material/Visibility'
@@ -355,6 +356,23 @@ const Settings = () => {
     }
   }
 
+  const handleScanFolders = async () => {
+    try {
+      const response = await VideoService.scanFolders()
+      setAlert({
+        open: true,
+        type: 'success',
+        message: `Folder scan complete! ${response.data.reassigned} item(s) reassigned, ${response.data.folders_removed} empty folder(s) removed.`,
+      })
+    } catch (err) {
+      setAlert({
+        open: true,
+        type: 'error',
+        message: err.response?.data?.error || 'Failed to scan folders',
+      })
+    }
+  }
+
   const handleDeleteFolderRule = async (unlinkVideos = false) => {
     const ruleId = deleteMenuRuleId
     setDeleteMenuAnchor(null)
@@ -510,7 +528,7 @@ const Settings = () => {
               <option value={1}>Sidebar</option>
               <option value={2}>Integrations</option>
               <option value={3}>Transcoding</option>
-              <option value={4}>Folders</option>
+              <option value={4}>Folder Rules</option>
               <option value={5}>Actions</option>
             </NativeSelect>
           </FormControl>
@@ -537,7 +555,7 @@ const Settings = () => {
             <Tab label="Sidebar" />
             <Tab label="Integrations" />
             <Tab label="Transcoding" />
-            <Tab label="Folders" />
+            <Tab label="Folder Rules" />
             <Tab label="Actions" />
           </Tabs>
         )}
@@ -793,6 +811,20 @@ const Settings = () => {
                       />
                     }
                     label="Tags"
+                  />
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={updatedConfig.ui_config?.show_folders !== false}
+                        onChange={(e) =>
+                          setUpdatedConfig((prev) => ({
+                            ...prev,
+                            ui_config: { ...prev.ui_config, show_folders: e.target.checked },
+                          }))
+                        }
+                      />
+                    }
+                    label="Folders"
                   />
                   <FormControlLabel
                     control={
@@ -1171,7 +1203,7 @@ const Settings = () => {
                 </Stack>
               )}
 
-              {/* Folders */}
+              {/* Folder Rules */}
               {activeTab === 4 && (
                 <Stack spacing={2} sx={{ maxWidth: 500, mt: -1 }}>
                   <Tabs
@@ -1196,7 +1228,7 @@ const Settings = () => {
                       </Box>
                       {folderRules.length === 0 ? (
                         <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center' }}>
-                          No folders found.
+                          No shared folders found.
                         </Typography>
                       ) : (
                         <Box sx={{ maxHeight: 800, overflowY: 'auto', pr: 1 }}>
@@ -1323,7 +1355,7 @@ const Settings = () => {
                       </Box>
                       {imageFolderRules.length === 0 ? (
                         <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center' }}>
-                          No folders found.
+                          No shared folders found.
                         </Typography>
                       ) : (
                         <Box sx={{ maxHeight: 800, overflowY: 'auto', pr: 1 }}>
@@ -1483,6 +1515,15 @@ const Settings = () => {
                     sx={{ width: '100%', maxWidth: 400 }}
                   >
                     Scan for Missing Dates
+                  </Button>
+                  <Button
+                    variant="contained"
+                    startIcon={<FolderCopyIcon />}
+                    onClick={handleScanFolders}
+                    size="large"
+                    sx={{ width: '100%', maxWidth: 400 }}
+                  >
+                    Scan for Folders
                   </Button>
                   <Button
                     variant="contained"

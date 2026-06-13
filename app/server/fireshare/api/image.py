@@ -14,7 +14,7 @@ from flask_login import login_required, current_user
 from sqlalchemy.sql import text
 
 from .. import db, logger, util
-from ..models import Image, ImageInfo, ImageView, ImageGameLink, ImageTagLink, GameMetadata
+from ..models import Image, ImageInfo, ImageView, ImageGameLink, ImageTagLink, GameMetadata, MediaFolder
 from . import api
 from .helpers import secure_filename
 from .decorators import demo_restrict
@@ -315,6 +315,7 @@ def delete_image(image_id):
     if not img:
         return Response(status=404)
 
+    folder_id = img.folder_id
     paths = current_app.config['PATHS']
 
     # Remove original image file
@@ -342,6 +343,8 @@ def delete_image(image_id):
     ImageInfo.query.filter_by(image_id=image_id).delete()
     Image.query.filter_by(image_id=image_id).delete()
     db.session.commit()
+
+    MediaFolder.cleanup_if_orphaned(folder_id, Image)
     return Response(status=200)
 
 

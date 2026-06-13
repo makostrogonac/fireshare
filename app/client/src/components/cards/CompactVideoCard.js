@@ -73,6 +73,16 @@ const CompactVideoCard = ({
   const [localTags, setLocalTags] = React.useState(video.tags || [])
   const [passwordModalOpen, setPasswordModalOpen] = React.useState(false)
   const [unlockedLocally, setUnlockedLocally] = React.useState(video.info?.session_unlocked || false)
+  const [titleHover, setTitleHover] = React.useState(false)
+  const [titleOverflowAmount, setTitleOverflowAmount] = React.useState(0)
+  const titleRef = React.useRef(null)
+
+  React.useEffect(() => {
+    if (!titleHover) return
+    const el = titleRef.current
+    if (!el) return
+    setTitleOverflowAmount(Math.max(0, el.scrollWidth - el.clientWidth))
+  }, [titleHover, title])
 
   const uiConfig = getSetting('ui_config')
   const canTagGames = authenticated || uiConfig?.allow_public_game_tag
@@ -193,9 +203,7 @@ const CompactVideoCard = ({
     const handler = (e) => {
       const { steamgriddbId, bust } = e.detail
       if (gameRef.current?.steamgriddb_id === steamgriddbId) {
-        setGame((prev) =>
-          prev ? { ...prev, icon_url: getGameAssetUrl(steamgriddbId, 'icon_1', bust) } : prev,
-        )
+        setGame((prev) => (prev ? { ...prev, icon_url: getGameAssetUrl(steamgriddbId, 'icon_1', bust) } : prev))
       }
     }
     window.addEventListener('gameAssetsUpdated', handler)
@@ -796,6 +804,8 @@ const CompactVideoCard = ({
 
         {/* Info section below thumbnail */}
         <Box
+          onMouseEnter={() => setTitleHover(true)}
+          onMouseLeave={() => setTitleHover(false)}
           sx={{
             display: 'flex',
             alignItems: 'stretch',
@@ -818,9 +828,20 @@ const CompactVideoCard = ({
                 <img
                   src={game.icon_url}
                   alt={game.name}
-                  onLoad={(e) => { e.currentTarget.style.opacity = 1 }}
-                  onError={(e) => { e.currentTarget.style.display = 'none' }}
-                  style={{ width: 40, height: 40, objectFit: 'contain', display: 'block', opacity: 0, transition: 'opacity 0.15s ease' }}
+                  onLoad={(e) => {
+                    e.currentTarget.style.opacity = 1
+                  }}
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none'
+                  }}
+                  style={{
+                    width: 40,
+                    height: 40,
+                    objectFit: 'contain',
+                    display: 'block',
+                    opacity: 0,
+                    transition: 'opacity 0.15s ease',
+                  }}
                 />
               )}
             </Box>
@@ -860,6 +881,7 @@ const CompactVideoCard = ({
               />
             ) : (
               <Typography
+                ref={titleRef}
                 onDoubleClick={
                   authenticated
                     ? (e) => {
@@ -875,7 +897,7 @@ const CompactVideoCard = ({
                   lineHeight: 1.3,
                   color: 'white',
                   overflow: 'hidden',
-                  textOverflow: 'ellipsis',
+                  textOverflow: titleHover && titleOverflowAmount > 0 ? 'clip' : 'ellipsis',
                   whiteSpace: 'nowrap',
                   ...(authenticated && {
                     cursor: 'text',
@@ -887,7 +909,25 @@ const CompactVideoCard = ({
                   }),
                 }}
               >
-                {title}
+                {titleHover && titleOverflowAmount > 0 ? (
+                  <Box
+                    component="span"
+                    sx={{
+                      display: 'inline-block',
+                      whiteSpace: 'nowrap',
+                      animation: `title-marquee-${video.video_id} 6s ease-in-out infinite`,
+                      [`@keyframes title-marquee-${video.video_id}`]: {
+                        '0%, 10%': { transform: 'translateX(0)' },
+                        '45%, 55%': { transform: `translateX(-${titleOverflowAmount}px)` },
+                        '90%, 100%': { transform: 'translateX(0)' },
+                      },
+                    }}
+                  >
+                    {title}
+                  </Box>
+                ) : (
+                  title
+                )}
               </Typography>
             )}
 

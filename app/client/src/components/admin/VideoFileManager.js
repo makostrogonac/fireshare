@@ -48,6 +48,8 @@ import Select from 'react-select'
 import { folderSelectTheme as selectFolderTheme } from '../../common/reactSelectThemes'
 import MarqueeSingleValue, { MarqueeOption } from '../ui/MarqueeSingleValue'
 import OutlinedIconButton from '../ui/OutlinedIconButton'
+import FolderPrivacyToggle from './FolderPrivacyToggle'
+import FolderLinkActions from './FolderLinkActions'
 import { dialogPaperSx, dialogTitleSx, inputSx, labelSx, rowBoxSx } from '../../common/modalStyles'
 import Api from '../../services/Api'
 import { formatSize, formatTableDate, formatDuration, formatResolution } from '../../common/utils'
@@ -174,6 +176,9 @@ const VideoFileRow = React.memo(function VideoFileRow({ file, isSelected, onTogg
           sx={{ color: '#FFFFFF44', '&.Mui-checked': { color: '#3399FF' } }}
         />
       </TableCell>
+
+      {/* Privacy spacer */}
+      <TableCell padding="checkbox" sx={{ ...bodyCellSx }} />
 
       {/* Name */}
       <TableCell sx={{ ...bodyCellSx, maxWidth: 300, overflow: 'hidden' }}>
@@ -883,7 +888,7 @@ export default function VideoFileManager({ setAlert }) {
     'Date',
     'Total Size',
   ].filter((c) => !hiddenColumns.has(c))
-  const COL_SPAN = 3 + visibleDataCols.length // checkbox + name + size + visible toggleable cols
+  const COL_SPAN = 4 + visibleDataCols.length // checkbox + privacy spacer + name + size + visible toggleable cols
 
   const renamePreviewFiles = selectedFiles.slice(0, 3)
 
@@ -1582,6 +1587,7 @@ export default function VideoFileManager({ setAlert }) {
                   sx={{ color: '#FFFFFF44', '&.Mui-checked, &.MuiCheckbox-indeterminate': { color: '#3399FF' } }}
                 />
               </TableCell>
+              <TableCell padding="checkbox" sx={{ ...headCellSx, width: 32 }} />
               {[
                 {
                   col: 'name',
@@ -1722,7 +1728,23 @@ export default function VideoFileManager({ setAlert }) {
                         />
                       </TableCell>
                       <TableCell
-                        colSpan={COL_SPAN - 1}
+                        padding="checkbox"
+                        sx={{
+                          py: 0.75,
+                          borderBottom: '1px solid #FFFFFF14',
+                          bgcolor: 'transparent',
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {folder && groupItems.length > 0 && (
+                          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                            <FolderPrivacyToggle path={folder} mediaType="video" setAlert={setAlert} />
+                            <FolderLinkActions path={folder} mediaType="video" setAlert={setAlert} />
+                          </Box>
+                        )}
+                      </TableCell>
+                      <TableCell
+                        colSpan={COL_SPAN - 2}
                         sx={{
                           py: 0.75,
                           borderBottom: '1px solid #FFFFFF14',

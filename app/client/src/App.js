@@ -11,6 +11,8 @@ import Settings from './views/Settings'
 import ImageFeed from './views/ImageFeed'
 import Games from './views/Games'
 import GameVideos from './views/GameVideos'
+import Folders from './views/Folders'
+import FolderView from './views/FolderView'
 import Tags from './views/Tags'
 import TagVideos from './views/TagVideos'
 import FileManager from './views/FileManager'
@@ -97,6 +99,34 @@ export default function App() {
                 <AuthWrapper>
                   <MainNavbar page="/games" collapsed={!drawerOpen} styleToggle cardSlider searchable mainPadding={0}>
                     <GameVideos />
+                  </MainNavbar>
+                </AuthWrapper>
+              }
+            />
+            <Route
+              path="/folders"
+              element={
+                <AuthWrapper>
+                  <MainNavbar page="/folders" collapsed={!drawerOpen} searchable searchPlaceholder="Search folders...">
+                    <Folders />
+                  </MainNavbar>
+                </AuthWrapper>
+              }
+            />
+            <Route
+              path="/folder/:folderUuid"
+              element={
+                <AuthWrapper>
+                  <MainNavbar
+                    page="/folders"
+                    collapsed={!drawerOpen}
+                    styleToggle
+                    cardSlider
+                    mainPadding={0}
+                    searchable
+                    searchPlaceholder="Search title..."
+                  >
+                    <FolderView />
                   </MainNavbar>
                 </AuthWrapper>
               }
