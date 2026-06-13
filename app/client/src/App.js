@@ -55,7 +55,6 @@ export default function App() {
                     collapsed={!drawerOpen}
                     searchable
                     styleToggle
-                    cardSlider
                     searchPlaceholder="Search title, game, or #tag..."
                   >
                     <Dashboard />
@@ -97,7 +96,7 @@ export default function App() {
               path="/games/:gameId"
               element={
                 <AuthWrapper>
-                  <MainNavbar page="/games" collapsed={!drawerOpen} styleToggle cardSlider searchable mainPadding={0}>
+                  <MainNavbar page="/games" collapsed={!drawerOpen} styleToggle searchable mainPadding={0}>
                     <GameVideos />
                   </MainNavbar>
                 </AuthWrapper>
@@ -121,7 +120,6 @@ export default function App() {
                     page="/folders"
                     collapsed={!drawerOpen}
                     styleToggle
-                    cardSlider
                     mainPadding={0}
                     searchable
                     searchPlaceholder="Search title..."
@@ -145,7 +143,7 @@ export default function App() {
               path="/tags/:tagId"
               element={
                 <AuthWrapper>
-                  <MainNavbar page="/tags" collapsed={!drawerOpen} styleToggle cardSlider searchable mainPadding={0}>
+                  <MainNavbar page="/tags" collapsed={!drawerOpen} styleToggle searchable mainPadding={0}>
                     <TagVideos />
                   </MainNavbar>
                 </AuthWrapper>
@@ -169,7 +167,6 @@ export default function App() {
                     page="/images"
                     collapsed={!drawerOpen}
                     styleToggle
-                    cardSlider
                     searchable
                     searchPlaceholder="Search title, game, or #tag..."
                   >
