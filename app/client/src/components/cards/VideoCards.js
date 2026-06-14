@@ -194,9 +194,11 @@ const VideoCards = ({
             ref={containerRef}
             sx={{
               display: 'grid',
-              width: isSingleColumn ? 'calc(100% + 48px)' : '100%',
-              justifyContent: isSingleColumn ? 'center' : 'start',
-              gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${size}px), ${size}px))`,
+              width: '100%',
+              justifyContent: 'start',
+              gridTemplateColumns: isSingleColumn
+                ? '1fr'
+                : `repeat(auto-fill, minmax(min(100%, ${size}px), ${size}px))`,
               gap: 2,
             }}
           >

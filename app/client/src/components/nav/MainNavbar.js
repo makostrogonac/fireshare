@@ -53,7 +53,7 @@ import ReleaseNotesDialog from '../modal/ReleaseNotesDialog'
 
 const drawerWidth = 240
 const minimizedDrawerWidth = 57
-const CARD_SIZE_MULTIPLIER = 2
+const CARD_SIZE = 300
 const DEMO_BANNER_HEIGHT = 34
 
 const allPages = [
@@ -149,7 +149,6 @@ function MainNavbar({
   collapsed = false,
   searchable = false,
   searchPlaceholder = 'Search videos...',
-  cardSlider = false,
   toolbar = true,
   mainPadding = 3,
   children,
@@ -673,20 +672,10 @@ function MainNavbar({
                   </IconButton>
                 )}
 
-                {/* Mobile: left content (when search not open) */}
-                {isMobile && !mobileSearchOpen && (
-                  <Box
-                    sx={{ flex: 1, display: 'flex', alignItems: 'center', minWidth: 0, overflow: 'hidden' }}
-                    id="navbar-toolbar-left-mobile"
-                  />
-                )}
-
-                {/* Desktop: left content + centered search */}
-                {!isMobile && (
-                  <Box sx={{ flex: '1 0 auto', display: 'flex', alignItems: 'center' }} id="navbar-toolbar-left" />
-                )}
+                {/* Desktop: left spacer + centered search */}
+                {!isMobile && <Box sx={{ flex: 1 }} />}
                 {searchable && !isMobile && (
-                  <Box id="navbar-search-container" sx={{ width: 520, flexShrink: 3, minWidth: 0, mr: 1, ml: 2 }}>
+                  <Box id="navbar-search-container" sx={{ width: 520, flexShrink: 1, minWidth: 0, mr: 1, ml: 2 }}>
                     <Search placeholder={searchPlaceholder} searchHandler={(value) => setSearchText(value)} />
                   </Box>
                 )}
@@ -694,7 +683,7 @@ function MainNavbar({
                 {/* Right controls — always in DOM so portal target stays valid */}
                 <Box
                   sx={{
-                    flex: isMobile ? '0 0 auto' : '1 0 auto',
+                    flex: 1,
                     display: isMobile && mobileSearchOpen ? 'none' : 'flex',
                     justifyContent: 'flex-end',
                     alignItems: 'center',
@@ -771,7 +760,15 @@ function MainNavbar({
         sx={{
           flexGrow: 1,
           minHeight: 0,
-          p: page !== '/watch' && page !== '/image' ? mainPadding : 0,
+          // Horizontal padding is dropped on mobile for media/list pages so video cards
+          // can sit edge-to-edge and fill the screen; forms keep their padding.
+          px:
+            page === '/watch' || page === '/image'
+              ? 0
+              : page === '/settings' || page === '/files'
+                ? mainPadding
+                : { xs: 0, sm: mainPadding },
+          py: page !== '/watch' && page !== '/image' ? mainPadding : 0,
           width: { sm: `calc(100% - ${open ? drawerWidth : minimizedDrawerWidth}px)` },
           overflowX: 'hidden',
           overflowY: 'auto',
@@ -791,7 +788,7 @@ function MainNavbar({
           authenticated,
           isAdmin,
           searchText,
-          cardSize: 300,
+          cardSize: CARD_SIZE,
           selectedFolder: effectiveFolder,
           onFolderChange: handleFolderChange,
           onFoldersLoaded: handleFoldersLoaded,
