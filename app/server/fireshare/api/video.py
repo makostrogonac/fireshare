@@ -279,7 +279,7 @@ def get_videos():
         # Ensure password-protected videos have a share token so owners can share
         # them from the card without first opening the modal. Bounded to
         # password-protected videos and committed once.
-        if v.info and v.info.has_password and not v.info.share_token:
+        if v.info and v.info.password_hash and not v.info.share_token:
             v.info.share_token = secrets.token_urlsafe(16)
             minted_share_token = True
         vjson = v.json()
