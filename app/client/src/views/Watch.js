@@ -3,14 +3,21 @@ import { saveProgress, getResumeTime } from '../common/videoProgress'
 import { useLocation, useParams } from 'react-router-dom'
 import { Button, Chip, CircularProgress, Divider, IconButton, TextField, Tooltip, Typography, Box } from '@mui/material'
 import { Helmet } from 'react-helmet'
-import ContentCopyIcon from '@mui/icons-material/ContentCopy'
+import ShareIcon from '@mui/icons-material/Share'
 import ContentCutIcon from '@mui/icons-material/ContentCut'
 import AccessTimeIcon from '@mui/icons-material/AccessTime'
 import LockIcon from '@mui/icons-material/Lock'
 import SnackbarAlert from '../components/alert/SnackbarAlert'
 import NotFound from './NotFound'
 import { VideoService, GameService } from '../services'
-import { getServedBy, getUrl, getPublicWatchUrl, copyToClipboard, getVideoSources } from '../common/utils'
+import {
+  getServedBy,
+  getUrl,
+  getPublicWatchUrl,
+  copyToClipboard,
+  getVideoSources,
+  getDiscordEmbedMarkdownLink,
+} from '../common/utils'
 import VideoJSPlayer from '../components/player/VideoJSPlayer'
 
 const URL = getUrl()
@@ -459,16 +466,16 @@ const Watch = ({ authenticated }) => {
               >
                 {`${PURL}${details?.video_id}`}
               </Typography>
-              <Tooltip title="Copy link">
+              <Tooltip title="Copy Discord embed">
                 <IconButton
                   size="small"
                   onClick={() => {
-                    copyToClipboard(`${PURL}${details?.video_id}`)
-                    setAlert({ type: 'info', message: 'Link copied to clipboard', open: true })
+                    copyToClipboard(getDiscordEmbedMarkdownLink(details?.video_id))
+                    setAlert({ type: 'info', message: 'Discord embed link copied to clipboard', open: true })
                   }}
                   sx={{ color: '#FFFFFF66', '&:hover': { color: 'white' }, p: 0.5, flexShrink: 0 }}
                 >
-                  <ContentCopyIcon sx={{ fontSize: 16 }} />
+                  <ShareIcon sx={{ fontSize: 16 }} />
                 </IconButton>
               </Tooltip>
             </Box>

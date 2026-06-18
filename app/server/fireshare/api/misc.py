@@ -92,7 +92,26 @@ def video_metadata(video_id):
         derived_dir = Path(current_app.config["PROCESSED_DIRECTORY"], "derived", video_id)
         poster_file = "custom_poster.webp" if (derived_dir / "custom_poster.webp").exists() else "poster.jpg"
         password_protected = bool(video.info and video.info.password_hash)
-        return render_template('metadata.html', video=video.json(), domain=domain, poster_file=poster_file, password_protected=password_protected)
+        embed_video_url = f"{domain}/api/video?id={video_id}&quality=720p"
+
+        embed_width = video.info.width if video.info else None
+        embed_height = video.info.height if video.info else None
+        if embed_width and embed_height and embed_height > 720:
+            embed_width = int(round(embed_width * (720 / embed_height)))
+            if embed_width % 2:
+                embed_width += 1
+            embed_height = 720
+
+        return render_template(
+            'metadata.html',
+            video=video.json(),
+            domain=domain,
+            poster_file=poster_file,
+            password_protected=password_protected,
+            embed_video_url=embed_video_url,
+            embed_width=embed_width,
+            embed_height=embed_height,
+        )
     else:
         return redirect('{}/watch/{}'.format(domain, video_id), code=302)
 

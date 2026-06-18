@@ -91,6 +91,12 @@ def get_video_path(id, subid=None, quality=None):
         derived_path = paths["processed"] / "derived" / id / f"{id}-{quality}.mp4"
         if derived_path.exists():
             return str(derived_path)
+        # For edited videos, fall back to the edited master instead of leaking
+        # the original unedited source when a derived quality is missing/still rendering.
+        cropped_path = paths["processed"] / "derived" / id / f"{id}-cropped.mp4"
+        if video.info and video.info.has_crop and cropped_path.exists():
+            logger.warning(f"Requested quality {quality} for video {id} not found, falling back to cropped master")
+            return str(cropped_path)
         # Fall back to original if quality doesn't exist
         logger.warning(f"Requested quality {quality} for video {id} not found, falling back to original")
 

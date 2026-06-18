@@ -28,6 +28,12 @@ export const getPublicWatchUrl = () => {
     : `${window.location.protocol}//${window.location.hostname}${portWithColon}/w/`
 }
 
+// U+3164 HANGUL FILLER renders as blank text but still satisfies Discord's
+// markdown link syntax, so sending only this link shows just the video embed.
+export const DISCORD_BLANK_LINK_TEXT = '\u3164'
+
+export const getDiscordEmbedMarkdownLink = (videoId) => `[${DISCORD_BLANK_LINK_TEXT}](${getPublicWatchUrl()}${videoId})`
+
 export const getVideoPath = (id, extension) => {
   if (extension === '.mkv') {
     return `${id}-1.mp4`

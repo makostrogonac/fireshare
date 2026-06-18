@@ -28,7 +28,7 @@ import AccessTimeIcon from '@mui/icons-material/AccessTime'
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth'
 import CloseIcon from '@mui/icons-material/Close'
 import CheckIcon from '@mui/icons-material/Check'
-import LinkIcon from '@mui/icons-material/Link'
+import ShareIcon from '@mui/icons-material/Share'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import LockIcon from '@mui/icons-material/Lock'
 import AddPhotoAlternateIcon from '@mui/icons-material/AddPhotoAlternate'
@@ -43,6 +43,7 @@ import {
   getUrl,
   getVideoSources,
   getSetting,
+  getDiscordEmbedMarkdownLink,
   getPosterUrl as getVideoPosterUrl,
 } from '../../common/utils'
 import { ConfigService, VideoService, GameService, TagService } from '../../services'
@@ -1940,16 +1941,16 @@ const VideoModal = ({
                       </Tooltip>
                     )}
 
-                    <Tooltip title="Copy link">
+                    <Tooltip title="Copy Discord embed">
                       <IconButton
                         size="small"
                         onClick={() => {
-                          copyToClipboard(`${PURL}${vid.video_id}`)
-                          setAlert({ type: 'info', message: 'Link copied to clipboard', open: true })
+                          copyToClipboard(getDiscordEmbedMarkdownLink(vid.video_id))
+                          setAlert({ type: 'info', message: 'Discord embed link copied to clipboard', open: true })
                         }}
                         sx={actionBtnSx}
                       >
-                        <LinkIcon sx={{ fontSize: 20 }} />
+                        <ShareIcon sx={{ fontSize: 20 }} />
                       </IconButton>
                     </Tooltip>
 

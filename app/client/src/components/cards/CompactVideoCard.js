@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Box, Chip, Typography, IconButton, Menu, MenuItem, ListItemIcon, Skeleton, Tooltip } from '@mui/material'
 import TagChip from '../ui/TagChip'
 import LockIcon from '@mui/icons-material/Lock'
-import LinkIcon from '@mui/icons-material/Link'
+import ShareIcon from '@mui/icons-material/Share'
 import VisibilityIcon from '@mui/icons-material/Visibility'
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff'
 import MoreVertIcon from '@mui/icons-material/MoreVert'
@@ -15,7 +15,16 @@ import FolderIcon from '@mui/icons-material/Folder'
 import CheckIcon from '@mui/icons-material/Check'
 import CloseIcon from '@mui/icons-material/Close'
 import { CopyToClipboard } from 'react-copy-to-clipboard'
-import { getPublicWatchUrl, toHHMMSS, getVideoUrl, getSetting, getPosterUrl, getGameAssetUrl } from '../../common/utils'
+import {
+  copyToClipboard,
+  getDiscordEmbedMarkdownLink,
+  getPublicWatchUrl,
+  toHHMMSS,
+  getVideoUrl,
+  getSetting,
+  getPosterUrl,
+  getGameAssetUrl,
+} from '../../common/utils'
 import { GameService, VideoService, ConfigService } from '../../services'
 import UpdateDetailsModal from '../modal/UpdateDetailsModal'
 import DeleteVideoModal from '../modal/DeleteVideoModal'
@@ -656,7 +665,7 @@ const CompactVideoCard = ({
               </Box>
             )}
 
-            {/* Copy link button - shows on hover */}
+            {/* Discord share button - shows on hover */}
             <Box
               sx={{
                 position: 'absolute',
@@ -666,7 +675,7 @@ const CompactVideoCard = ({
                 transition: 'opacity 0.2s ease-in-out',
               }}
             >
-              <CopyToClipboard text={`${PURL}${video.video_id}`}>
+              <CopyToClipboard text={getDiscordEmbedMarkdownLink(video.video_id)}>
                 <IconButton
                   sx={{
                     bgcolor: '#000000BF',
@@ -674,18 +683,18 @@ const CompactVideoCard = ({
                       background: '#2684FF88',
                     },
                   }}
-                  aria-label="copy link"
+                  aria-label="copy Discord embed"
                   size="small"
                   onClick={(e) => {
                     e.stopPropagation()
                     alertHandler?.({
                       type: 'info',
-                      message: 'Link copied to clipboard',
+                      message: 'Discord embed link copied to clipboard',
                       open: true,
                     })
                   }}
                 >
-                  <LinkIcon sx={{ color: 'white', fontSize: 24 }} />
+                  <ShareIcon sx={{ color: 'white', fontSize: 24 }} />
                 </IconButton>
               </CopyToClipboard>
             </Box>
@@ -1061,12 +1070,12 @@ const CompactVideoCard = ({
               onClick: handleTranscode,
             },
             {
-              label: 'Copy Link',
-              Icon: LinkIcon,
+              label: 'Copy Discord Embed',
+              Icon: ShareIcon,
               color: '#FFFFFFE6',
               onClick: () => {
-                navigator.clipboard.writeText(`${PURL}${video.video_id}`)
-                alertHandler?.({ type: 'info', message: 'Link copied to clipboard', open: true })
+                copyToClipboard(getDiscordEmbedMarkdownLink(video.video_id))
+                alertHandler?.({ type: 'info', message: 'Discord embed link copied to clipboard', open: true })
               },
             },
             {
