@@ -68,8 +68,10 @@ def _clear_crop(video, video_info, paths, had_480p, had_720p, had_1080p):
         _retranscode_async(video.video_id, original_path, paths, had_480p, had_720p, had_1080p)
 
 
-def _apply_crop_async(video, video_info, start_time, end_time, paths):
-    """Clear old crop files, then create new crop and re-transcode in a background thread."""
+def _apply_crop_async(video, video_info, start_time, end_time, paths, audio_tracks=None):
+    """Clear old crop files, then create new crop and re-transcode in a background thread.
+    If audio_tracks is provided (list of {track_index, volume_pct}), mix the selected
+    audio tracks instead of copying all streams."""
     had_480p = video_info.has_480p
     had_720p = video_info.has_720p
     had_1080p = video_info.has_1080p
@@ -102,7 +104,13 @@ def _apply_crop_async(video, video_info, start_time, end_time, paths):
         thumbnail_skip = 0
 
     def run():
-        success = util.create_video_crop(original_path, cropped_path, start_time, end_time)
+        if audio_tracks is not None:
+            success = util.create_video_crop_with_audio(
+                original_path, cropped_path, start_time, end_time,
+                audio_tracks=audio_tracks
+            )
+        else:
+            success = util.create_video_crop(original_path, cropped_path, start_time, end_time)
         with app.app_context():
             vi = VideoInfo.query.filter_by(video_id=video_id).first()
             if not vi:
@@ -569,6 +577,7 @@ def handle_video_details(id):
             # get written directly (we handle them via the crop pipeline below)
             new_start = data.pop('start_time', _UNSET)
             new_end   = data.pop('end_time',   _UNSET)
+            audio_tracks = data.pop('audio_tracks', None)
 
             # Update remaining VideoInfo fields generically
             if data:
@@ -627,7 +636,7 @@ def handle_video_details(id):
                     _clear_crop(video, video_info, paths, had_480p, had_720p, had_1080p)
                 else:
                     # Creating / replacing the crop
-                    _apply_crop_async(video, video_info, resolved_start, resolved_end, paths)
+                    _apply_crop_async(video, video_info, resolved_start, resolved_end, paths, audio_tracks=audio_tracks)
 
             if generated_password is not None:
                 return jsonify({"generated_password": generated_password}), 201

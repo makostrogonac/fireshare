@@ -208,66 +208,8 @@ function QualitySelector({ sources, currentSourceIndex, onSelect }) {
   )
 }
 
-/* ── Audio track volume controls ─────────────────────────────────── */
-function AudioTrackControls({ audioTracks, trackVolumes, onTrackVolumeChange }) {
-  if (!audioTracks || audioTracks.length === 0) return null
-
-  return (
-    <>
-      {audioTracks.map((track, i) => (
-        <Popover.Root key={i} openOnHover delay={200} closeDelay={100} side="top">
-          <Popover.Trigger
-            render={
-              <button
-                type="button"
-                className="media-button media-button--icon"
-                style={{
-                  fontSize: '0.65rem',
-                  fontWeight: 500,
-                  minWidth: 28,
-                  padding: '0 4px',
-                  opacity: (trackVolumes?.[i] ?? 100) === 0 ? 0.4 : 1,
-                }}
-                title={track.title || `Track ${i + 1}`}
-              >
-                <VolumeHighIcon className="media-icon" style={{ width: 16, height: 16 }} />
-                <span style={{ marginLeft: 2 }}>{i + 1}</span>
-              </button>
-            }
-          />
-          <Popover.Popup
-            className="media-surface media-popover"
-            style={{ padding: '8px 12px', minWidth: 140 }}
-          >
-            <div style={{ fontSize: '0.7rem', color: '#ffffff99', marginBottom: 4 }}>
-              {track.title || `Audio Track ${i + 1}`}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <input
-                type="range"
-                min="0"
-                max="200"
-                value={trackVolumes?.[i] ?? 100}
-                onChange={(e) => onTrackVolumeChange?.(i, parseInt(e.target.value))}
-                style={{
-                  width: 80,
-                  accentColor: '#3399FF',
-                  height: 4,
-                }}
-              />
-              <span style={{ fontSize: '0.7rem', color: 'white', minWidth: 36 }}>
-                {trackVolumes?.[i] ?? 100}%
-              </span>
-            </div>
-          </Popover.Popup>
-        </Popover.Root>
-      ))}
-    </>
-  )
-}
-
 /* ── The custom skin ────────────────────────────────────────────────── */
-function CustomVideoSkin({ children, className, sources, currentSourceIndex, onQualitySelect, audioTracks, trackVolumes, onTrackVolumeChange, ...rest }) {
+function CustomVideoSkin({ children, className, sources, currentSourceIndex, onQualitySelect, ...rest }) {
   return (
     <Container className={`media-default-skin media-default-skin--video${className ? ` ${className}` : ''}`} {...rest}>
       {/* Caller-provided children (e.g. <Video>, <Poster>) */}
@@ -399,13 +341,6 @@ function CustomVideoSkin({ children, className, sources, currentSourceIndex, onQ
               </VolumeSlider.Root>
             </Popover.Popup>
           </Popover.Root>
-
-          {/* ★ Audio track controls ★ */}
-          <AudioTrackControls
-            audioTracks={audioTracks}
-            trackVolumes={trackVolumes}
-            onTrackVolumeChange={onTrackVolumeChange}
-          />
 
           {/* ★ Quality selector ★ */}
           <QualitySelector sources={sources} currentSourceIndex={currentSourceIndex} onSelect={onQualitySelect} />

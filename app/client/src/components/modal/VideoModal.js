@@ -226,7 +226,7 @@ const VideoModal = ({
   const [cropProcessing, setCropProcessing] = React.useState(false)
   const [playerVersion, setPlayerVersion] = React.useState(0)
   const [audioTracks, setAudioTracks] = React.useState(null)
-  const [trackVolumes, setTrackVolumes] = React.useState(null)
+  const [trackSettings, setTrackSettings] = React.useState([])
 
   const playerRef = React.useRef()
   const waveformRef = React.useRef(null)
@@ -377,14 +377,14 @@ const VideoModal = ({
           const tracks = tracksRes.data?.tracks || null
           setAudioTracks(tracks)
           if (tracks && tracks.length > 0) {
-            setTrackVolumes(tracks.map(() => 100))
+            setTrackSettings(tracks.map((t) => ({ track_num: t.track_num, enabled: true, volume: 100 })))
           } else {
-            setTrackVolumes(null)
+            setTrackSettings([])
           }
         } catch (err) {
           if (!cancelled) {
             setAudioTracks(null)
-            setTrackVolumes(null)
+            setTrackSettings([])
           }
         }
       } catch (err) {
@@ -403,6 +403,7 @@ const VideoModal = ({
       setCropEnd(null)
       setHasCustomPoster(false)
       setAudioTracks(null)
+      setTrackSettings([])
       setPosterCacheKey(Date.now())
       if (pendingThumbnailPreview) window.URL.revokeObjectURL(pendingThumbnailPreview)
       setPendingThumbnailFile(null)
@@ -515,6 +516,12 @@ const VideoModal = ({
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00`
   }
 
+  const handleTrackSettingChange = React.useCallback((trackNum, setting) => {
+    setTrackSettings((prev) =>
+      prev.map((s) => (s.track_num === trackNum ? { ...s, ...setting } : s)),
+    )
+  }, [])
+
   const update = async () => {
     if (!authenticated) return
     const cropChanged = cropStart !== (vid?.info?.start_time ?? null) || cropEnd !== (vid?.info?.end_time ?? null)
@@ -568,6 +575,19 @@ const VideoModal = ({
       if (cropChanged) {
         payload.start_time = cropStart
         payload.end_time = cropEnd
+        // Include audio track configuration when the user has customized audio
+        // (disabled some tracks, or changed volumes from default 100%)
+        const enabledTracks = trackSettings.filter((s) => s.enabled)
+        const allDefault = trackSettings.every((s) => s.enabled && s.volume === 100)
+        const allDisabled = enabledTracks.length === 0 && trackSettings.length > 0
+        if ((enabledTracks.length > 0 && enabledTracks.length < trackSettings.length) ||
+            trackSettings.some((s) => s.enabled && s.volume !== 100) ||
+            allDisabled) {
+          payload.audio_tracks = enabledTracks.map((s) => ({
+            track_index: s.track_num,
+            volume_pct: s.volume,
+          }))
+        }
       }
       await VideoService.updateDetails(vid.video_id, payload)
       if (cropApplied) {
@@ -813,9 +833,6 @@ const VideoModal = ({
                     fill={true}
                     fluid={false}
                     playsinline={true}
-                    videoId={vid.video_id}
-                    audioTracks={audioTracks}
-                    trackVolumes={trackVolumes}
                   />
                   {cropProcessing && (
                     <Box
@@ -1595,6 +1612,8 @@ const VideoModal = ({
                     startTime={cropStart}
                     endTime={cropEnd}
                     audioTracks={audioTracks}
+                    trackSettings={trackSettings}
+                    onTrackSettingChange={handleTrackSettingChange}
                     onChange={({ startTime, endTime }) => {
                       setCropStart(startTime)
                       setCropEnd(endTime)

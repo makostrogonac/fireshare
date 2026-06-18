@@ -171,6 +171,9 @@ const service = {
   getAudioTracks(videoId) {
     return Api().get('/api/video/audio-tracks', { params: { id: videoId } })
   },
+  getAudioTrackExtract(videoId, trackNum) {
+    return Api().get('/api/video/audio', { params: { id: videoId, track: trackNum } })
+  },
 }
 
 export default service

@@ -1,10 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
-import { Box, Typography, CircularProgress, Menu, MenuItem, Button, Slider, IconButton, Tabs, Tab } from '@mui/material'
+import { Box, Typography, CircularProgress, Menu, MenuItem, Button, Slider, Checkbox, Tabs, Tab } from '@mui/material'
 import WaveSurfer from 'wavesurfer.js'
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js'
 import { getUrl } from '../../common/utils'
-import MergeIcon from '@mui/icons-material/MergeType'
-import AddIcon from '@mui/icons-material/Add'
 
 const labelSx = { fontSize: 11, color: '#FFFFFFB3', mb: 0.5, textTransform: 'uppercase', letterSpacing: '0.08em' }
 
@@ -28,9 +26,9 @@ const TIMELINE_HEIGHT = 20 // px
  * with a draggable/resizable region marking the crop start and end points.
  *
  * Supports multiple audio tracks with:
- *   - Tab switching between tracks
- *   - Individual volume control per track
- *   - Merging two tracks into a combined waveform
+ *   - Tab switching between tracks to view individual waveforms
+ *   - Checkbox to include/exclude each track from the final clip
+ *   - Individual volume control (0-200%) per track
  *
  * Props:
  *   videoId       — video ID used to build /api/video/audio?id={videoId}&track={n}
@@ -38,12 +36,28 @@ const TIMELINE_HEIGHT = 20 // px
  *   startTime     — current crop start (null = full start)
  *   endTime       — current crop end   (null = full end)
  *   audioTracks   — array of audio track objects from /api/video/audio-tracks
+ *   trackSettings — array of {track_num, volume, enabled} — current track selection state
+ *   onTrackSettingChange — (track_num, setting) => void — update a single track's settings
  *   onChange      — ({ startTime: number|null, endTime: number|null }) => void
  *   onSeek        — (time) => void — seek the video player to the given time
  *   getCurrentTime — () => number — current playback position
  */
 const WaveformCropper = React.forwardRef(
-  ({ videoId, duration, startTime, endTime, audioTracks, onChange, onSeek, getCurrentTime }, ref) => {
+  (
+    {
+      videoId,
+      duration,
+      startTime,
+      endTime,
+      audioTracks,
+      trackSettings,
+      onTrackSettingChange,
+      onChange,
+      onSeek,
+      getCurrentTime,
+    },
+    ref,
+  ) => {
     const containerRef = useRef(null)
     const timelineCanvasRef = useRef(null)
     const extScrollbarRef = useRef(null)
@@ -60,13 +74,10 @@ const WaveformCropper = React.forwardRef(
     const isReadyRef = useRef(false)
     const cursorTimeRef = useRef(0)
 
-    // Multi-track state
-    const tracks = audioTracks && audioTracks.length > 0 ? audioTracks : [{ track_num: 0, title: 'Default' }]
+    // Track list
+    const tracks = audioTracks && audioTracks.length > 0 ? audioTracks : [{ track_num: 0, title: 'Default', index: 0 }]
     const [activeTrack, setActiveTrack] = useState(0)
-    const [trackVolumes, setTrackVolumes] = useState(() => tracks.map(() => 100))
-    const [mergedTracks, setMergedTracks] = useState(null) // null | [trackA_index, trackB_index]
-    const [mergeVolume, setMergeVolume] = useState(50) // balance between two merged tracks
-    const [contextMenu, setContextMenu] = useState(null) // { x, y, cursorTime } | null
+    const [contextMenu, setContextMenu] = useState(null)
 
     useEffect(() => {
       onSeekRef.current = onSeek
@@ -87,10 +98,8 @@ const WaveformCropper = React.forwardRef(
           cursorTimeRef.current = time
           ws.seekTo(Math.max(0, Math.min(1, time / total)))
         },
-        getTrackVolumes: () => trackVolumes,
-        getMergedTracks: () => mergedTracks,
       }),
-      [trackVolumes, mergedTracks],
+      [],
     )
 
     const [isLoading, setIsLoading] = useState(true)
@@ -112,21 +121,14 @@ const WaveformCropper = React.forwardRef(
       extScrollbarInnerRef.current.style.width = scrollContainer.scrollWidth + 'px'
     }
 
-    // Build the audio URL based on active track or merged state
+    // Build the audio URL based on active track
     const buildAudioUrl = useCallback(() => {
-      if (mergedTracks) {
-        // When merged, use the second track's audio as base (merge is done visually)
-        const t = tracks[mergedTracks[1]] || tracks[0]
-        if (t.track_num != null) {
-          return `${getUrl()}/api/video/audio?id=${videoId}&track=${t.track_num}`
-        }
-      }
       const t = tracks[activeTrack]
       if (t && t.track_num != null) {
         return `${getUrl()}/api/video/audio?id=${videoId}&track=${t.track_num}`
       }
       return `${getUrl()}/api/video/audio?id=${videoId}`
-    }, [videoId, activeTrack, mergedTracks, tracks])
+    }, [videoId, activeTrack, tracks])
 
     // Main Wavesurfer setup
     useEffect(() => {
@@ -202,8 +204,8 @@ const WaveformCropper = React.forwardRef(
 
       const ws = WaveSurfer.create({
         container: containerRef.current,
-        waveColor: mergedTracks ? '#FFD70040' : '#FFFFFF30',
-        progressColor: mergedTracks ? '#FFD700ce' : '#3399ffce',
+        waveColor: '#FFFFFF30',
+        progressColor: '#3399ffce',
         cursorColor: 'rgba(255, 255, 255, 0.85)',
         cursorWidth: 2,
         height: 64,
@@ -242,7 +244,7 @@ const WaveformCropper = React.forwardRef(
         regionRef.current = regionsPlugin.addRegion({
           start: s,
           end: e,
-          color: mergedTracks ? 'rgba(255, 215, 0, 0.36)' : 'rgba(51, 153, 255, 0.36)',
+          color: 'rgba(51, 153, 255, 0.36)',
           drag: true,
           resize: true,
           minLength: 1,
@@ -252,7 +254,7 @@ const WaveformCropper = React.forwardRef(
         if (handleEls?.length) {
           handleEls.forEach((el) => {
             const side = el.getAttribute('part')?.includes('left') ? 'left' : 'right'
-            const color = mergedTracks ? 'rgba(255, 215, 0, 0.88)' : 'rgba(51, 153, 255, 0.88)'
+            const color = 'rgba(51, 153, 255, 0.88)'
             Object.assign(el.style, {
               width: '6px',
               background: color,
@@ -278,6 +280,7 @@ const WaveformCropper = React.forwardRef(
           })
         }
 
+        // Force region update to ensure callbacks fire
         onChange(toNullable(s, e, total))
 
         const currentVideoTime = getCurrentTimeRef.current?.() ?? 0
@@ -370,7 +373,7 @@ const WaveformCropper = React.forwardRef(
         container.removeEventListener('wheel', handleWheel)
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [videoId, activeTrack, mergedTracks])
+    }, [videoId, activeTrack])
 
     const handleExternalScroll = () => {
       if (isSyncingScroll.current) return
@@ -406,24 +409,10 @@ const WaveformCropper = React.forwardRef(
       onChange({ startTime: null, endTime: null })
     }
 
-    const handleVolumeChange = (trackIdx, value) => {
-      const newVolumes = [...trackVolumes]
-      newVolumes[trackIdx] = value
-      setTrackVolumes(newVolumes)
-    }
-
-    const handleToggleMerge = () => {
-      if (mergedTracks) {
-        setMergedTracks(null)
-        setActiveTrack(0)
-        setIsLoading(true)
-        setLoadError(false)
-      } else if (tracks.length >= 2) {
-        setMergedTracks([0, 1])
-        setIsLoading(true)
-        setLoadError(false)
-      }
-    }
+    const enabledCount = tracks.filter((t) => {
+      const ts = trackSettings?.find((s) => s.track_num === t.track_num)
+      return ts ? ts.enabled : true // default enabled
+    }).length
 
     return (
       <>
@@ -431,7 +420,7 @@ const WaveformCropper = React.forwardRef(
           {/* Waveform column — cropper box + external scrollbar below it */}
           <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
             {/* Track tabs */}
-            {tracks.length > 1 && !mergedTracks && (
+            {tracks.length > 1 && (
               <Tabs
                 value={activeTrack}
                 onChange={(_, v) => {
@@ -454,33 +443,28 @@ const WaveformCropper = React.forwardRef(
                   '& .MuiTabs-indicator': { bgcolor: '#3399FF' },
                 }}
               >
-                {tracks.map((t, i) => (
-                  <Tab key={i} label={t.title || `Track ${i + 1}`} />
-                ))}
+                {tracks.map((t, i) => {
+                  const ts = trackSettings?.find((s) => s.track_num === t.track_num)
+                  const enabled = ts ? ts.enabled : true
+                  return (
+                    <Tab
+                      key={i}
+                      label={
+                        <span style={{ opacity: enabled ? 1 : 0.4 }}>
+                          {t.title || `Track ${i + 1}`}
+                        </span>
+                      }
+                    />
+                  )
+                })}
               </Tabs>
-            )}
-
-            {mergedTracks && (
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5, px: 1 }}>
-                <MergeIcon sx={{ fontSize: 16, color: '#FFD700' }} />
-                <Typography sx={{ fontSize: 11, color: '#FFD700', textTransform: 'uppercase', letterSpacing: '0.08em', flex: 1 }}>
-                  Merged: {tracks[mergedTracks[0]]?.title} + {tracks[mergedTracks[1]]?.title}
-                </Typography>
-                <Button
-                  size="small"
-                  onClick={handleToggleMerge}
-                  sx={{ fontSize: 10, color: '#FF6B6B', minWidth: 'auto', p: '2px 6px' }}
-                >
-                  Unmerge
-                </Button>
-              </Box>
             )}
 
             <Box
               sx={{
                 position: 'relative',
-                bgcolor: mergedTracks ? '#1A1508' : '#FFFFFF08',
-                border: mergedTracks ? '1px solid #FFD70033' : '1px solid #FFFFFF1A',
+                bgcolor: '#FFFFFF08',
+                border: '1px solid #FFFFFF1A',
                 borderRadius: '8px',
                 overflow: 'hidden',
                 minHeight: 68 + TIMELINE_HEIGHT,
@@ -588,39 +572,40 @@ const WaveformCropper = React.forwardRef(
           </Box>
         </Box>
 
-        {/* Volume controls per track */}
+        {/* Per-track selection and volume controls */}
         {tracks.length > 0 && (
           <Box sx={{ mt: 1.5, display: 'flex', flexDirection: 'column', gap: 1 }}>
             <Typography sx={labelSx}>
-              {mergedTracks ? 'Merge Balance' : 'Track Volumes'}
+              Audio Tracks ({enabledCount} enabled)
             </Typography>
-            {mergedTracks ? (
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                <Typography sx={{ fontSize: 11, color: '#FFFFFF66', minWidth: 60 }}>
-                  {tracks[mergedTracks[0]]?.title || 'Track A'}
-                </Typography>
-                <Slider
-                  size="small"
-                  value={mergeVolume}
-                  onChange={(_, v) => setMergeVolume(v)}
-                  min={0}
-                  max={100}
-                  sx={{ flex: 1, color: '#FFD700', '& .MuiSlider-thumb': { width: 12, height: 12 } }}
-                />
-                <Typography sx={{ fontSize: 11, color: '#FFFFFF66', minWidth: 60, textAlign: 'right' }}>
-                  {tracks[mergedTracks[1]]?.title || 'Track B'}
-                </Typography>
-              </Box>
-            ) : (
-              tracks.map((t, i) => (
-                <Box key={i} sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            {tracks.map((t, i) => {
+              const ts = trackSettings?.find((s) => s.track_num === t.track_num)
+              const enabled = ts ? ts.enabled : true
+              const volume = ts?.volume ?? 100
+
+              return (
+                <Box key={i} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Checkbox
+                    checked={enabled}
+                    onChange={(e) =>
+                      onTrackSettingChange?.(t.track_num, { enabled: e.target.checked, volume })
+                    }
+                    size="small"
+                    sx={{
+                      color: '#FFFFFF44',
+                      p: 0.5,
+                      '&.Mui-checked': { color: '#3399FF' },
+                      '& .MuiSvgIcon-root': { fontSize: 18 },
+                    }}
+                  />
                   <Typography
                     sx={{
                       fontSize: 11,
-                      color: i === activeTrack ? '#3399FF' : '#FFFFFF66',
+                      color: i === activeTrack ? '#3399FF' : '#FFFFFF88',
                       minWidth: 80,
                       cursor: 'pointer',
                       fontWeight: i === activeTrack ? 700 : 400,
+                      opacity: enabled ? 1 : 0.4,
                     }}
                     onClick={() => {
                       setActiveTrack(i)
@@ -632,41 +617,33 @@ const WaveformCropper = React.forwardRef(
                   </Typography>
                   <Slider
                     size="small"
-                    value={trackVolumes[i] ?? 100}
-                    onChange={(_, v) => handleVolumeChange(i, v)}
+                    value={volume}
+                    onChange={(_, v) =>
+                      onTrackSettingChange?.(t.track_num, { enabled, volume: v })
+                    }
                     min={0}
                     max={200}
+                    disabled={!enabled}
                     sx={{
                       flex: 1,
-                      color: i === activeTrack ? '#3399FF' : '#FFFFFF44',
+                      color: enabled ? '#3399FF' : '#FFFFFF22',
                       '& .MuiSlider-thumb': { width: 12, height: 12 },
+                      '&.Mui-disabled': { color: '#FFFFFF15' },
                     }}
                   />
-                  <Typography sx={{ fontSize: 11, color: '#FFFFFF66', minWidth: 36, textAlign: 'right' }}>
-                    {trackVolumes[i] ?? 100}%
+                  <Typography
+                    sx={{
+                      fontSize: 11,
+                      color: enabled ? '#FFFFFF99' : '#FFFFFF33',
+                      minWidth: 36,
+                      textAlign: 'right',
+                    }}
+                  >
+                    {volume}%
                   </Typography>
                 </Box>
-              ))
-            )}
-            {tracks.length >= 2 && (
-              <Button
-                size="small"
-                onClick={handleToggleMerge}
-                startIcon={mergedTracks ? null : <MergeIcon />}
-                sx={{
-                  mt: 0.5,
-                  fontSize: 11,
-                  color: mergedTracks ? '#FF6B6B' : '#FFD700',
-                  bgcolor: mergedTracks ? '#1A0D0D' : '#1A1508',
-                  border: mergedTracks ? '1px solid #FF6B6B33' : '1px solid #FFD70033',
-                  '&:hover': {
-                    bgcolor: mergedTracks ? '#2A1515' : '#2A2008',
-                  },
-                }}
-              >
-                {mergedTracks ? 'Unmerge Tracks' : 'Merge Tracks 1 + 2'}
-              </Button>
-            )}
+              )
+            })}
           </Box>
         )}
 

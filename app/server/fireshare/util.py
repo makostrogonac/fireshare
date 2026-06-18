@@ -406,28 +406,98 @@ def create_video_crop(source_path, out_path, start_time=None, end_time=None):
 
 def create_audio_extract(source_path, out_path, track_index=None):
     """
-    Extract a tiny mono audio-only MP3 from source_path for waveform display.
-    If track_index is provided, extracts only that audio stream (0:a:<track_index>).
-    Low bitrate + mono keeps the file small so WaveSurfer loads/decodes quickly.
+    Extract audio from source_path for waveform display or per-track editing.
+    - Without track_index: tiny mono MP3 for waveform display (low quality, fast load).
+    - With track_index: extract that audio stream at original quality (AAC, 192k,
+      original channels and sample rate) so the editor gets full-fidelity audio.
     Returns True on success, False on failure.
     """
-    cmd = ['ffmpeg', '-v', 'quiet', '-y',
-        '-i', str(source_path)]
+    cmd = ['ffmpeg', '-v', 'quiet', '-y', '-i', str(source_path)]
     if track_index is not None:
         cmd += ['-map', f'0:a:{track_index}']
-    cmd += [
-        '-vn',           # drop video
-        '-ac', '1',      # mono
-        '-ar', '22050',  # 22 kHz sample rate (plenty for a waveform visual)
-        '-b:a', '32k',   # 32 kbps — keeps file tiny
-        str(out_path),
-    ]
+        cmd += ['-vn', '-acodec', 'aac', '-b:a', '192k', str(out_path)]
+    else:
+        cmd += [
+            '-vn',           # drop video
+            '-ac', '1',      # mono
+            '-ar', '22050',  # 22 kHz sample rate (plenty for a waveform visual)
+            '-b:a', '32k',   # 32 kbps — keeps file tiny
+            str(out_path),
+        ]
     logger.debug(f"$ {' '.join(cmd)}")
     result = sp.call(cmd)
     if result == 0:
         logger.info(f'Created audio extract {str(out_path)}')
     else:
         logger.error(f'Failed to create audio extract {str(out_path)} (exit code {result})')
+    return result == 0
+
+
+def create_video_crop_with_audio(
+    source_path, out_path, start_time=None, end_time=None, audio_tracks=None
+):
+    """
+    Create a cropped video with optional custom audio mixing.
+
+    - audio_tracks=None: behaves like create_video_crop (stream copy all streams).
+    - audio_tracks=[] (empty): creates a video with no audio track (silent).
+    - audio_tracks=[{track_index, volume_pct}, ...]: extracts the listed audio streams
+      from the cropped segment, applies per-track volume, mixes with amix, and muxes
+      with copied video.
+    """
+    if audio_tracks is None:
+        return create_video_crop(source_path, out_path, start_time, end_time)
+
+    cmd = ['ffmpeg', '-y']
+    if start_time:
+        cmd += ['-ss', str(start_time)]
+    if end_time:
+        cmd += ['-to', str(end_time)]
+    cmd += ['-i', str(source_path)]
+
+    if len(audio_tracks) == 0:
+        # No audio tracks selected — video only
+        cmd += ['-map', '0:v:0', '-c:v', 'copy', '-an', '-movflags', '+faststart', str(out_path)]
+    else:
+        num_tracks = len(audio_tracks)
+        filter_parts = []
+        label_names = []
+
+        for i, t in enumerate(audio_tracks):
+            vol = max(0, min(10, (t.get('volume_pct', 100) / 100.0)))
+            label = f'a{i}'
+            filter_parts.append(f'[0:a:{t["track_index"]}]volume={vol}[{label}]')
+            label_names.append(f'[{label}]')
+
+        if num_tracks == 1:
+            filter_complex = filter_parts[0]
+            audio_map = f'[{label_names[0].strip("[]")}]'
+        else:
+            filter_complex = ';'.join(filter_parts)
+            mix_inputs = ''.join(label_names)
+            filter_complex += f';{mix_inputs}amix=inputs={num_tracks}:duration=first:dropout_transition=0[aout]'
+            audio_map = '[aout]'
+
+        cmd += [
+            '-filter_complex', filter_complex,
+            '-map', '0:v:0',
+            '-map', audio_map,
+            '-c:v', 'copy',
+            '-c:a', 'aac',
+            '-b:a', '192k',
+            '-movflags', '+faststart',
+            str(out_path),
+        ]
+
+    logger.debug(f"$ {' '.join(cmd)}")
+    result = sp.call(cmd)
+    if result == 0:
+        logger.info(
+            f'Created crop with custom audio {str(out_path)} '
+            f'(start={start_time}, end={end_time}, tracks={[t["track_index"] for t in audio_tracks]})'
+        )
+    else:
+        logger.error(f'Failed to create crop with audio {str(out_path)} (exit code {result})')
     return result == 0
 
 

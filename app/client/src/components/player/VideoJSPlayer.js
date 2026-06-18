@@ -1,10 +1,9 @@
-import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react'
+import React, { useEffect, useRef, useState, useMemo } from 'react'
 import '@videojs/react/video/skin.css'
 import './videoSkinOverrides.css'
 import { createPlayer, useMedia, Poster } from '@videojs/react'
 import { Video, videoFeatures } from '@videojs/react/video'
 import CustomVideoSkin from './CustomVideoSkin'
-import { getUrl } from '../../common/utils'
 
 // Tolerance threshold for checking if player is already at the desired start time (in seconds)
 const SEEK_TOLERANCE_SECONDS = 0.5
@@ -20,113 +19,6 @@ const BUFFER_COUNT_WINDOW_MS = 30000
 
 // Create the Video.js 10 player instance (module-level singleton)
 const Player = createPlayer({ features: videoFeatures })
-
-/**
- * AudioTrackSync — plays secondary audio tracks alongside the main video,
- * keeping them in sync with playback and respecting individual volumes.
- * Audio track URLs are fetched from /api/video/audio?id={videoId}&track={index}
- */
-function AudioTrackSync({ videoId, audioTracks, trackVolumes }) {
-  const media = Player.useMedia()
-  const audioRefs = useRef([])
-  const syncIntervalRef = useRef(null)
-  const [trackUrls, setTrackUrls] = useState([])
-
-  // Build audio URLs for each track
-  useEffect(() => {
-    if (!audioTracks || audioTracks.length === 0 || !videoId) return
-    const urls = audioTracks
-      .filter((t) => t.track_num != null)
-      .map((t) => `${getUrl()}/api/video/audio?id=${videoId}&track=${t.track_num}`)
-    setTrackUrls(urls)
-  }, [videoId, audioTracks])
-
-  // Play/pause secondary audio in sync with main video
-  useEffect(() => {
-    if (!media || trackUrls.length === 0) return
-
-    const handlePlay = () => {
-      audioRefs.current.forEach((a) => {
-        if (a) {
-          a.currentTime = media.currentTime
-          a.play().catch(() => {})
-        }
-      })
-    }
-
-    const handlePause = () => {
-      audioRefs.current.forEach((a) => {
-        if (a) a.pause()
-      })
-    }
-
-    const handleSeeked = () => {
-      audioRefs.current.forEach((a) => {
-        if (a) a.currentTime = media.currentTime
-      })
-    }
-
-    const handleRateChange = () => {
-      audioRefs.current.forEach((a) => {
-        if (a) a.playbackRate = media.playbackRate
-      })
-    }
-
-    media.addEventListener('play', handlePlay)
-    media.addEventListener('pause', handlePause)
-    media.addEventListener('seeked', handleSeeked)
-    media.addEventListener('ratechange', handleRateChange)
-
-    // Periodic sync to prevent drift (every 5 seconds)
-    syncIntervalRef.current = setInterval(() => {
-      if (media && !media.paused) {
-        audioRefs.current.forEach((a, i) => {
-          if (a && !a.paused) {
-            const drift = Math.abs(a.currentTime - media.currentTime)
-            if (drift > 0.3) {
-              a.currentTime = media.currentTime
-            }
-          }
-        })
-      }
-    }, 5000)
-
-    return () => {
-      media.removeEventListener('play', handlePlay)
-      media.removeEventListener('pause', handlePause)
-      media.removeEventListener('seeked', handleSeeked)
-      media.removeEventListener('ratechange', handleRateChange)
-      if (syncIntervalRef.current) clearInterval(syncIntervalRef.current)
-    }
-  }, [media, trackUrls])
-
-  // Apply volume changes
-  useEffect(() => {
-    if (!trackVolumes) return
-    audioRefs.current.forEach((a, i) => {
-      if (a) {
-        a.volume = Math.max(0, Math.min(1, (trackVolumes[i] ?? 100) / 100))
-      }
-    })
-  }, [trackVolumes])
-
-  if (trackUrls.length === 0) return null
-
-  return (
-    <div style={{ display: 'none' }} aria-hidden="true">
-      {trackUrls.map((url, i) => (
-        <audio
-          key={i}
-          ref={(el) => {
-            audioRefs.current[i] = el
-          }}
-          src={url}
-          preload="auto"
-        />
-      ))}
-    </div>
-  )
-}
 
 function PlayerEffects({ sources, onSourceChange, onTimeUpdate, onReady, startTime }) {
   const store = Player.usePlayer()
@@ -445,8 +337,6 @@ function FrameStepKeys() {
  *
  * Accepts the same props as the previous v8 component so that consumers
  * (Watch.js, VideoModal.js) do not need to change their usage.
- *
- * New: supports `audioTracks` and `trackVolumes` for dual audio playback.
  */
 const VideoJSPlayer = ({
   sources,
@@ -459,9 +349,6 @@ const VideoJSPlayer = ({
   startTime,
   className,
   style,
-  videoId,
-  audioTracks,
-  trackVolumes,
 }) => {
   const [currentSourceIndex, setCurrentSourceIndex] = useState(() => {
     const idx = sources?.findIndex((s) => s.selected)
@@ -488,22 +375,6 @@ const VideoJSPlayer = ({
     ...style,
   }
 
-  // Manage audio track volumes locally (initialized from prop)
-  const [localTrackVolumes, setLocalTrackVolumes] = useState(trackVolumes)
-  useEffect(() => {
-    setLocalTrackVolumes(trackVolumes)
-  }, [trackVolumes])
-
-  const handleTrackVolumeChange = useCallback((index, value) => {
-    setLocalTrackVolumes((prev) => {
-      const next = [...(prev || audioTracks?.map(() => 100) || [])]
-      next[index] = value
-      return next
-    })
-  }, [audioTracks])
-
-  const hasAudioTracks = audioTracks && audioTracks.length > 0
-
   return (
     <Player.Provider>
       <CustomVideoSkin
@@ -512,9 +383,6 @@ const VideoJSPlayer = ({
         sources={sources}
         currentSourceIndex={currentSourceIndex}
         onQualitySelect={setCurrentSourceIndex}
-        audioTracks={hasAudioTracks ? audioTracks : null}
-        trackVolumes={localTrackVolumes}
-        onTrackVolumeChange={handleTrackVolumeChange}
       >
         <Video src={activeSrc} autoPlay={autoplay} playsInline={playsinline} preload="auto" />
         {poster && <Poster src={poster} alt="" />}
@@ -528,13 +396,6 @@ const VideoJSPlayer = ({
       />
       <SpacebarToggle />
       <FrameStepKeys />
-      {hasAudioTracks && (
-        <AudioTrackSync
-          videoId={videoId || sources?.[0]?.src?.match(/id=([^&]+)/)?.[1]}
-          audioTracks={audioTracks}
-          trackVolumes={localTrackVolumes}
-        />
-      )}
     </Player.Provider>
   )
 }
