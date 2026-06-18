@@ -197,6 +197,7 @@ const WaveformCropper = React.forwardRef(
       const regionsPlugin = RegionsPlugin.create()
       regionsPluginRef.current = regionsPlugin
 
+      const fetchController = new AbortController()
       const audioUrl = buildAudioUrl()
 
       const ws = WaveSurfer.create({
@@ -216,7 +217,7 @@ const WaveformCropper = React.forwardRef(
         barRadius: 0,
         barAlign: 'bottom',
         url: audioUrl,
-        fetchParams: { credentials: 'include', signal: AbortSignal.timeout(180000) },
+        fetchParams: { credentials: 'include', signal: fetchController.signal },
         plugins: [regionsPlugin],
       })
       wsRef.current = ws
@@ -362,6 +363,7 @@ const WaveformCropper = React.forwardRef(
 
       return () => {
         isReadyRef.current = false
+        fetchController.abort()
         ws.destroy()
         container.removeEventListener('click', handleClick)
         container.removeEventListener('contextmenu', handleContextMenu)
