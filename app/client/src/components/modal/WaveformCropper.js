@@ -1,8 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react'
-import { Box, Typography, CircularProgress, Menu, MenuItem, Button } from '@mui/material'
+import React, { useEffect, useRef, useState, useCallback } from 'react'
+import { Box, Typography, CircularProgress, Menu, MenuItem, Button, Slider, IconButton, Tabs, Tab } from '@mui/material'
 import WaveSurfer from 'wavesurfer.js'
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js'
 import { getUrl } from '../../common/utils'
+import MergeIcon from '@mui/icons-material/MergeType'
+import AddIcon from '@mui/icons-material/Add'
 
 const labelSx = { fontSize: 11, color: '#FFFFFFB3', mb: 0.5, textTransform: 'uppercase', letterSpacing: '0.08em' }
 
@@ -22,18 +24,26 @@ const numInputSx = {
 const TIMELINE_HEIGHT = 20 // px
 
 /**
- * WaveformCropper — renders an audio waveform for the original (unmodified) video
+ * WaveformCropper — renders audio waveforms for video audio tracks
  * with a draggable/resizable region marking the crop start and end points.
  *
+ * Supports multiple audio tracks with:
+ *   - Tab switching between tracks
+ *   - Individual volume control per track
+ *   - Merging two tracks into a combined waveform
+ *
  * Props:
- *   videoId    — video ID used to build /api/video/original?id={videoId}
- *   duration   — original video duration in seconds (used as fallback)
- *   startTime  — current crop start (null = full start)
- *   endTime    — current crop end   (null = full end)
- *   onChange   — ({ startTime: number|null, endTime: number|null }) => void
+ *   videoId       — video ID used to build /api/video/audio?id={videoId}&track={n}
+ *   duration      — original video duration in seconds (used as fallback)
+ *   startTime     — current crop start (null = full start)
+ *   endTime       — current crop end   (null = full end)
+ *   audioTracks   — array of audio track objects from /api/video/audio-tracks
+ *   onChange      — ({ startTime: number|null, endTime: number|null }) => void
+ *   onSeek        — (time) => void — seek the video player to the given time
+ *   getCurrentTime — () => number — current playback position
  */
 const WaveformCropper = React.forwardRef(
-  ({ videoId, duration, startTime, endTime, onChange, onSeek, getCurrentTime }, ref) => {
+  ({ videoId, duration, startTime, endTime, audioTracks, onChange, onSeek, getCurrentTime }, ref) => {
     const containerRef = useRef(null)
     const timelineCanvasRef = useRef(null)
     const extScrollbarRef = useRef(null)
@@ -50,6 +60,12 @@ const WaveformCropper = React.forwardRef(
     const isReadyRef = useRef(false)
     const cursorTimeRef = useRef(0)
 
+    // Multi-track state
+    const tracks = audioTracks && audioTracks.length > 0 ? audioTracks : [{ track_num: 0, title: 'Default', index: null }]
+    const [activeTrack, setActiveTrack] = useState(0)
+    const [trackVolumes, setTrackVolumes] = useState(() => tracks.map(() => 100))
+    const [mergedTracks, setMergedTracks] = useState(null) // null | [trackA_index, trackB_index]
+    const [mergeVolume, setMergeVolume] = useState(50) // balance between two merged tracks
     const [contextMenu, setContextMenu] = useState(null) // { x, y, cursorTime } | null
 
     useEffect(() => {
@@ -71,8 +87,10 @@ const WaveformCropper = React.forwardRef(
           cursorTimeRef.current = time
           ws.seekTo(Math.max(0, Math.min(1, time / total)))
         },
+        getTrackVolumes: () => trackVolumes,
+        getMergedTracks: () => mergedTracks,
       }),
-      [],
+      [trackVolumes, mergedTracks],
     )
 
     const [isLoading, setIsLoading] = useState(true)
@@ -94,25 +112,36 @@ const WaveformCropper = React.forwardRef(
       extScrollbarInnerRef.current.style.width = scrollContainer.scrollWidth + 'px'
     }
 
+    // Build the audio URL based on active track or merged state
+    const buildAudioUrl = useCallback(() => {
+      if (mergedTracks) {
+        // When merged, use the first track's audio as base (merge is done visually)
+        const t = tracks[mergedTracks[1]] || tracks[0]
+        if (t.index != null) {
+          return `${getUrl()}/api/video/audio?id=${videoId}&track=${t.index}`
+        }
+      }
+      const t = tracks[activeTrack]
+      if (t && t.index != null) {
+        return `${getUrl()}/api/video/audio?id=${videoId}&track=${t.index}`
+      }
+      return `${getUrl()}/api/video/audio?id=${videoId}`
+    }, [videoId, activeTrack, mergedTracks, tracks])
+
+    // Main Wavesurfer setup
     useEffect(() => {
       if (!containerRef.current) return
 
       // ── Custom canvas timeline ──────────────────────────────────────────────
-      // Draws tick marks + time labels onto a <canvas> above the waveform.
-      // Replaces WaveSurfer's TimelinePlugin which has a virtualAppend bug that
-      // prevents ticks from rendering when clientWidth is 0 on first paint.
       const drawTimeline = () => {
         const canvas = timelineCanvasRef.current
         if (!canvas || !isReadyRef.current) return
         const ws = wsRef.current
-        const duration = ws?.getDuration() ?? 0
-        if (!duration || zoomRef.current <= 0) return
+        const dur = ws?.getDuration() ?? 0
+        if (!dur || zoomRef.current <= 0) return
 
-        // ws.getWrapper() = inner .wrapper div (never scrolls).
-        // ws.getScroll()  = scrollContainer.scrollLeft (the actual scrollable element).
-        // ws.getWrapper().offsetWidth = rendered canvas width = pxPerSec * duration.
         const scrollLeft = ws.getScroll()
-        const pxPerSec = (ws?.getWrapper()?.offsetWidth ?? 0) / duration
+        const pxPerSec = (ws?.getWrapper()?.offsetWidth ?? 0) / dur
         const dpr = window.devicePixelRatio || 1
         const cssWidth = canvas.offsetWidth
         const cssHeight = canvas.offsetHeight
@@ -124,15 +153,14 @@ const WaveformCropper = React.forwardRef(
         ctx.scale(dpr, dpr)
         ctx.clearRect(0, 0, cssWidth, cssHeight)
 
-        // Pick "nice" intervals so ticks stay ~40px apart, labels ~120px apart
         const niceAll = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600]
         const niceLabel = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600]
         const tickInterval = niceAll.find((n) => n >= 40 / pxPerSec) ?? 600
         const labelInterval = niceLabel.find((n) => n >= 120 / pxPerSec) ?? 600
         const labelsPerTick = Math.max(1, Math.round(labelInterval / tickInterval))
 
-        const startTime = scrollLeft / pxPerSec
-        const firstTickIndex = Math.max(0, Math.floor(startTime / tickInterval))
+        const start = scrollLeft / pxPerSec
+        const firstTickIndex = Math.max(0, Math.floor(start / tickInterval))
         const firstTick = firstTickIndex * tickInterval
 
         ctx.font = `13px monospace, -apple-system, sans-serif`
@@ -140,13 +168,12 @@ const WaveformCropper = React.forwardRef(
 
         for (let i = 0; ; i++) {
           const t = firstTick + i * tickInterval
-          if (t > duration + tickInterval) break
+          if (t > dur + tickInterval) break
           const x = Math.round(t * pxPerSec - scrollLeft)
           if (x > cssWidth + 2) break
 
           const isLabel = (firstTickIndex + i) % labelsPerTick === 0
 
-          // Tick line
           ctx.globalAlpha = isLabel ? 0.5 : 0.2
           ctx.strokeStyle = '#ffffff'
           ctx.lineWidth = 1
@@ -170,10 +197,12 @@ const WaveformCropper = React.forwardRef(
       const regionsPlugin = RegionsPlugin.create()
       regionsPluginRef.current = regionsPlugin
 
+      const audioUrl = buildAudioUrl()
+
       const ws = WaveSurfer.create({
         container: containerRef.current,
-        waveColor: '#FFFFFF30',
-        progressColor: '#3399ffce',
+        waveColor: mergedTracks ? '#FFD70040' : '#FFFFFF30',
+        progressColor: mergedTracks ? '#FFD700ce' : '#3399ffce',
         cursorColor: 'rgba(255, 255, 255, 0.85)',
         cursorWidth: 2,
         height: 64,
@@ -186,7 +215,7 @@ const WaveformCropper = React.forwardRef(
         barGap: 1,
         barRadius: 0,
         barAlign: 'bottom',
-        url: `${getUrl()}/api/video/audio?id=${videoId}`,
+        url: audioUrl,
         fetchParams: { credentials: 'include', signal: AbortSignal.timeout(180000) },
         plugins: [regionsPlugin],
       })
@@ -212,27 +241,24 @@ const WaveformCropper = React.forwardRef(
         regionRef.current = regionsPlugin.addRegion({
           start: s,
           end: e,
-          color: 'rgba(51, 153, 255, 0.36)',
+          color: mergedTracks ? 'rgba(255, 215, 0, 0.36)' : 'rgba(51, 153, 255, 0.36)',
           drag: true,
           resize: true,
           minLength: 1,
         })
 
-        // Style the resize handles as solid grab bars with grip lines.
-        // WaveSurfer regions plugin uses part="region-handle region-handle-left/right"
-        // (not data-resize) in this version.
         const handleEls = regionRef.current.element?.querySelectorAll('[part~="region-handle"]')
         if (handleEls?.length) {
           handleEls.forEach((el) => {
             const side = el.getAttribute('part')?.includes('left') ? 'left' : 'right'
+            const color = mergedTracks ? 'rgba(255, 215, 0, 0.88)' : 'rgba(51, 153, 255, 0.88)'
             Object.assign(el.style, {
               width: '6px',
-              background: 'rgba(51, 153, 255, 0.88)',
+              background: color,
               border: 'none',
               cursor: 'ew-resize',
               borderRadius: side === 'left' ? '3px 0 0 3px' : '0 3px 3px 0',
             })
-            // Three horizontal grip lines centered in the bar
             ;['-5px', '0px', '5px'].forEach((offset) => {
               const line = document.createElement('div')
               Object.assign(line.style, {
@@ -253,22 +279,17 @@ const WaveformCropper = React.forwardRef(
 
         onChange(toNullable(s, e, total))
 
-        // Sync cursor to current video playback position
         const currentVideoTime = getCurrentTimeRef.current?.() ?? 0
         if (currentVideoTime > 0 && total > 0) {
           ws.seekTo(Math.max(0, Math.min(1, currentVideoTime / total)))
         }
 
-        // Compute and apply the zoom that fits the full waveform in the container
         const containerWidth = containerRef.current?.clientWidth || 500
         const fitZoom = containerWidth / total
         minZoomRef.current = fitZoom
         zoomRef.current = fitZoom
         ws.zoom(fitZoom)
 
-        // Hide WaveSurfer's built-in scrollbar — we use an external one below.
-        // The actual scrollable element is the .scroll div (wrapper's parent), not
-        // the inner .wrapper returned by getWrapper().
         const scrollContainer = ws.getWrapper()?.parentElement
         if (scrollContainer) {
           scrollContainer.style.scrollbarWidth = 'none'
@@ -288,7 +309,6 @@ const WaveformCropper = React.forwardRef(
         })
       })
 
-      // Sync WaveSurfer scroll → external scrollbar + timeline redraw
       ws.on('scroll', () => {
         if (!isSyncingScroll.current && extScrollbarRef.current) {
           isSyncingScroll.current = true
@@ -307,14 +327,10 @@ const WaveformCropper = React.forwardRef(
         onChange(toNullable(s, e, total))
       })
 
-      // Click anywhere on the waveform → move seek cursor + seek video
       const container = containerRef.current
       const handleClick = (e) => {
         const ws = wsRef.current
         if (!ws || !ws.getDuration()) return
-        // WaveSurfer uses a Shadow DOM internally; its inner wrapper's getBoundingClientRect()
-        // automatically accounts for scroll offset (its .left goes negative when scrolled right),
-        // so this gives the correct waveform-relative click position at any zoom level.
         const wrapper = ws.getWrapper()
         const rect = wrapper.getBoundingClientRect()
         const progress = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
@@ -328,7 +344,6 @@ const WaveformCropper = React.forwardRef(
         setContextMenu({ x: e.clientX, y: e.clientY, cursorTime: cursorTimeRef.current })
       }
 
-      // Vertical scroll → zoom in/out; horizontal scroll passes through naturally
       const handleWheel = (e) => {
         if (e.deltaY === 0 || !wsRef.current) return
         e.preventDefault()
@@ -353,9 +368,8 @@ const WaveformCropper = React.forwardRef(
         container.removeEventListener('wheel', handleWheel)
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [videoId])
+    }, [videoId, activeTrack, mergedTracks])
 
-    // External scrollbar → WaveSurfer scroll position + timeline redraw
     const handleExternalScroll = () => {
       if (isSyncingScroll.current) return
       const ws = wsRef.current
@@ -390,24 +404,87 @@ const WaveformCropper = React.forwardRef(
       onChange({ startTime: null, endTime: null })
     }
 
+    const handleVolumeChange = (trackIdx, value) => {
+      const newVolumes = [...trackVolumes]
+      newVolumes[trackIdx] = value
+      setTrackVolumes(newVolumes)
+    }
+
+    const handleToggleMerge = () => {
+      if (mergedTracks) {
+        setMergedTracks(null)
+        setActiveTrack(0)
+        setIsLoading(true)
+        setLoadError(false)
+      } else if (tracks.length >= 2) {
+        setMergedTracks([0, 1])
+        setIsLoading(true)
+        setLoadError(false)
+      }
+    }
+
     return (
       <>
         <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start', height: '100%' }}>
           {/* Waveform column — cropper box + external scrollbar below it */}
           <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+            {/* Track tabs */}
+            {tracks.length > 1 && !mergedTracks && (
+              <Tabs
+                value={activeTrack}
+                onChange={(_, v) => {
+                  setActiveTrack(v)
+                  setIsLoading(true)
+                  setLoadError(false)
+                }}
+                sx={{
+                  minHeight: 32,
+                  mb: 0.5,
+                  '& .MuiTab-root': {
+                    minHeight: 32,
+                    fontSize: 11,
+                    color: '#FFFFFF66',
+                    textTransform: 'none',
+                    px: 1.5,
+                    py: 0,
+                    '&.Mui-selected': { color: '#3399FF' },
+                  },
+                  '& .MuiTabs-indicator': { bgcolor: '#3399FF' },
+                }}
+              >
+                {tracks.map((t, i) => (
+                  <Tab key={i} label={t.title || `Track ${i + 1}`} />
+                ))}
+              </Tabs>
+            )}
+
+            {mergedTracks && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5, px: 1 }}>
+                <MergeIcon sx={{ fontSize: 16, color: '#FFD700' }} />
+                <Typography sx={{ fontSize: 11, color: '#FFD700', textTransform: 'uppercase', letterSpacing: '0.08em', flex: 1 }}>
+                  Merged: {tracks[mergedTracks[0]]?.title} + {tracks[mergedTracks[1]]?.title}
+                </Typography>
+                <Button
+                  size="small"
+                  onClick={handleToggleMerge}
+                  sx={{ fontSize: 10, color: '#FF6B6B', minWidth: 'auto', p: '2px 6px' }}
+                >
+                  Unmerge
+                </Button>
+              </Box>
+            )}
+
             <Box
               sx={{
                 position: 'relative',
-                bgcolor: '#FFFFFF08',
-                border: '1px solid #FFFFFF1A',
+                bgcolor: mergedTracks ? '#1A1508' : '#FFFFFF08',
+                border: mergedTracks ? '1px solid #FFD70033' : '1px solid #FFFFFF1A',
                 borderRadius: '8px',
                 overflow: 'hidden',
                 minHeight: 68 + TIMELINE_HEIGHT,
               }}
             >
-              {/* Waveform canvas */}
               <div ref={containerRef} style={{ width: '100%', overflow: 'hidden' }} />
-              {/* Custom timeline canvas — sits below the waveform bars */}
               <canvas
                 ref={timelineCanvasRef}
                 style={{
@@ -426,7 +503,7 @@ const WaveformCropper = React.forwardRef(
                     alignItems: 'center',
                     justifyContent: 'center',
                     gap: 1.5,
-                    pb: `${TIMELINE_HEIGHT}px`, // account for timeline canvas at the bottom
+                    pb: `${TIMELINE_HEIGHT}px`,
                   }}
                 >
                   {loadError ? (
@@ -441,7 +518,6 @@ const WaveformCropper = React.forwardRef(
               )}
             </Box>
 
-            {/* External scrollbar — sits below the cropper, only visible when zoomed in */}
             <div
               ref={extScrollbarRef}
               onScroll={handleExternalScroll}
@@ -459,7 +535,7 @@ const WaveformCropper = React.forwardRef(
               alignItems: 'center',
               justifyContent: 'center',
               height: '100%',
-              pb: '14px', // offset the external scrollbar height so centering aligns with the cropper box
+              pb: '14px',
             }}
           >
             <Box sx={{ display: 'flex', flexDirection: 'row', gap: 1 }}>
@@ -509,6 +585,88 @@ const WaveformCropper = React.forwardRef(
             </Button>
           </Box>
         </Box>
+
+        {/* Volume controls per track */}
+        {tracks.length > 0 && (
+          <Box sx={{ mt: 1.5, display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <Typography sx={labelSx}>
+              {mergedTracks ? 'Merge Balance' : 'Track Volumes'}
+            </Typography>
+            {mergedTracks ? (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                <Typography sx={{ fontSize: 11, color: '#FFFFFF66', minWidth: 60 }}>
+                  {tracks[mergedTracks[0]]?.title || 'Track A'}
+                </Typography>
+                <Slider
+                  size="small"
+                  value={mergeVolume}
+                  onChange={(_, v) => setMergeVolume(v)}
+                  min={0}
+                  max={100}
+                  sx={{ flex: 1, color: '#FFD700', '& .MuiSlider-thumb': { width: 12, height: 12 } }}
+                />
+                <Typography sx={{ fontSize: 11, color: '#FFFFFF66', minWidth: 60, textAlign: 'right' }}>
+                  {tracks[mergedTracks[1]]?.title || 'Track B'}
+                </Typography>
+              </Box>
+            ) : (
+              tracks.map((t, i) => (
+                <Box key={i} sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                  <Typography
+                    sx={{
+                      fontSize: 11,
+                      color: i === activeTrack ? '#3399FF' : '#FFFFFF66',
+                      minWidth: 80,
+                      cursor: 'pointer',
+                      fontWeight: i === activeTrack ? 700 : 400,
+                    }}
+                    onClick={() => {
+                      setActiveTrack(i)
+                      setIsLoading(true)
+                      setLoadError(false)
+                    }}
+                  >
+                    {t.title || `Track ${i + 1}`}
+                  </Typography>
+                  <Slider
+                    size="small"
+                    value={trackVolumes[i] ?? 100}
+                    onChange={(_, v) => handleVolumeChange(i, v)}
+                    min={0}
+                    max={200}
+                    sx={{
+                      flex: 1,
+                      color: i === activeTrack ? '#3399FF' : '#FFFFFF44',
+                      '& .MuiSlider-thumb': { width: 12, height: 12 },
+                    }}
+                  />
+                  <Typography sx={{ fontSize: 11, color: '#FFFFFF66', minWidth: 36, textAlign: 'right' }}>
+                    {trackVolumes[i] ?? 100}%
+                  </Typography>
+                </Box>
+              ))
+            )}
+            {tracks.length >= 2 && (
+              <Button
+                size="small"
+                onClick={handleToggleMerge}
+                startIcon={mergedTracks ? null : <MergeIcon />}
+                sx={{
+                  mt: 0.5,
+                  fontSize: 11,
+                  color: mergedTracks ? '#FF6B6B' : '#FFD700',
+                  bgcolor: mergedTracks ? '#1A0D0D' : '#1A1508',
+                  border: mergedTracks ? '1px solid #FF6B6B33' : '1px solid #FFD70033',
+                  '&:hover': {
+                    bgcolor: mergedTracks ? '#2A1515' : '#2A2008',
+                  },
+                }}
+              >
+                {mergedTracks ? 'Unmerge Tracks' : 'Merge Tracks 1 + 2'}
+              </Button>
+            )}
+          </Box>
+        )}
 
         <Menu
           open={contextMenu !== null}

@@ -168,6 +168,9 @@ const service = {
   removePassword(videoId) {
     return Api().put(`/api/video/details/${videoId}`, { remove_password: true })
   },
+  getAudioTracks(videoId) {
+    return Api().get('/api/video/audio-tracks', { params: { id: videoId } })
+  },
 }
 
 export default service

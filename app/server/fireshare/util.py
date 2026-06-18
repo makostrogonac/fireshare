@@ -404,15 +404,18 @@ def create_video_crop(source_path, out_path, start_time=None, end_time=None):
     return result == 0
 
 
-def create_audio_extract(source_path, out_path):
+def create_audio_extract(source_path, out_path, track_index=None):
     """
     Extract a tiny mono audio-only MP3 from source_path for waveform display.
+    If track_index is provided, extracts only that audio stream (0:a:<track_index>).
     Low bitrate + mono keeps the file small so WaveSurfer loads/decodes quickly.
     Returns True on success, False on failure.
     """
-    cmd = [
-        'ffmpeg', '-v', 'quiet', '-y',
-        '-i', str(source_path),
+    cmd = ['ffmpeg', '-v', 'quiet', '-y',
+        '-i', str(source_path)]
+    if track_index is not None:
+        cmd += ['-map', f'0:a:{track_index}']
+    cmd += [
         '-vn',           # drop video
         '-ac', '1',      # mono
         '-ar', '22050',  # 22 kHz sample rate (plenty for a waveform visual)

@@ -1,9 +1,10 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react'
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import '@videojs/react/video/skin.css'
 import './videoSkinOverrides.css'
 import { createPlayer, useMedia, Poster } from '@videojs/react'
 import { Video, videoFeatures } from '@videojs/react/video'
 import CustomVideoSkin from './CustomVideoSkin'
+import { getUrl } from '../../common/utils'
 
 // Tolerance threshold for checking if player is already at the desired start time (in seconds)
 const SEEK_TOLERANCE_SECONDS = 0.5
@@ -19,6 +20,113 @@ const BUFFER_COUNT_WINDOW_MS = 30000
 
 // Create the Video.js 10 player instance (module-level singleton)
 const Player = createPlayer({ features: videoFeatures })
+
+/**
+ * AudioTrackSync — plays secondary audio tracks alongside the main video,
+ * keeping them in sync with playback and respecting individual volumes.
+ * Audio track URLs are fetched from /api/video/audio?id={videoId}&track={index}
+ */
+function AudioTrackSync({ videoId, audioTracks, trackVolumes }) {
+  const media = Player.useMedia()
+  const audioRefs = useRef([])
+  const syncIntervalRef = useRef(null)
+  const [trackUrls, setTrackUrls] = useState([])
+
+  // Build audio URLs for each track
+  useEffect(() => {
+    if (!audioTracks || audioTracks.length === 0 || !videoId) return
+    const urls = audioTracks
+      .filter((t) => t.index != null)
+      .map((t) => `${getUrl()}/api/video/audio?id=${videoId}&track=${t.index}`)
+    setTrackUrls(urls)
+  }, [videoId, audioTracks])
+
+  // Play/pause secondary audio in sync with main video
+  useEffect(() => {
+    if (!media || trackUrls.length === 0) return
+
+    const handlePlay = () => {
+      audioRefs.current.forEach((a) => {
+        if (a) {
+          a.currentTime = media.currentTime
+          a.play().catch(() => {})
+        }
+      })
+    }
+
+    const handlePause = () => {
+      audioRefs.current.forEach((a) => {
+        if (a) a.pause()
+      })
+    }
+
+    const handleSeeked = () => {
+      audioRefs.current.forEach((a) => {
+        if (a) a.currentTime = media.currentTime
+      })
+    }
+
+    const handleRateChange = () => {
+      audioRefs.current.forEach((a) => {
+        if (a) a.playbackRate = media.playbackRate
+      })
+    }
+
+    media.addEventListener('play', handlePlay)
+    media.addEventListener('pause', handlePause)
+    media.addEventListener('seeked', handleSeeked)
+    media.addEventListener('ratechange', handleRateChange)
+
+    // Periodic sync to prevent drift (every 5 seconds)
+    syncIntervalRef.current = setInterval(() => {
+      if (media && !media.paused) {
+        audioRefs.current.forEach((a, i) => {
+          if (a && !a.paused) {
+            const drift = Math.abs(a.currentTime - media.currentTime)
+            if (drift > 0.3) {
+              a.currentTime = media.currentTime
+            }
+          }
+        })
+      }
+    }, 5000)
+
+    return () => {
+      media.removeEventListener('play', handlePlay)
+      media.removeEventListener('pause', handlePause)
+      media.removeEventListener('seeked', handleSeeked)
+      media.removeEventListener('ratechange', handleRateChange)
+      if (syncIntervalRef.current) clearInterval(syncIntervalRef.current)
+    }
+  }, [media, trackUrls])
+
+  // Apply volume changes
+  useEffect(() => {
+    if (!trackVolumes) return
+    audioRefs.current.forEach((a, i) => {
+      if (a) {
+        a.volume = Math.max(0, Math.min(1, (trackVolumes[i] ?? 100) / 100))
+      }
+    })
+  }, [trackVolumes])
+
+  if (trackUrls.length === 0) return null
+
+  return (
+    <div style={{ display: 'none' }} aria-hidden="true">
+      {trackUrls.map((url, i) => (
+        <audio
+          key={i}
+          ref={(el) => {
+            audioRefs.current[i] = el
+          }}
+          src={url}
+          preload="auto"
+        />
+      ))}
+    </div>
+  )
+}
 
 function PlayerEffects({ sources, onSourceChange, onTimeUpdate, onReady, startTime }) {
   const store = Player.usePlayer()
@@ -75,8 +183,6 @@ function PlayerEffects({ sources, onSourceChange, onTimeUpdate, onReady, startTi
     if (!media || !startTime || startTimeApplied.current) return
 
     const applySeek = () => {
-      // Validate against actual media duration when available, skipping the seek
-      // if the saved position is outside the 10–90% window.
       if (media.duration > 0) {
         const pct = startTime / media.duration
         if (startTime < 10 || pct > 0.9) {
@@ -88,27 +194,21 @@ function PlayerEffects({ sources, onSourceChange, onTimeUpdate, onReady, startTi
       startTimeApplied.current = true
     }
 
-    // canplay fires after loadedmetadata and guarantees the browser is actually
-    // ready to play from any position — more reliable than loadedmetadata alone.
     const handleCanPlay = () => {
       if (!startTimeApplied.current) applySeek()
     }
 
-    // loadedmetadata is an earlier signal; use it as a first attempt.
     const handleLoaded = () => {
       if (!startTimeApplied.current) applySeek()
     }
 
     if (media.readyState >= 1) {
-      // Metadata already loaded — try immediately, canplay will catch it if needed.
       applySeek()
     } else {
       media.addEventListener('loadedmetadata', handleLoaded, { once: true })
     }
     media.addEventListener('canplay', handleCanPlay, { once: true })
 
-    // Final safety net: if autoplay fires before canplay (e.g. the browser starts
-    // playing before our listeners run), seek on the first play event too.
     const handlePlay = () => {
       if (!startTimeApplied.current || Math.abs(media.currentTime - startTime) > SEEK_TOLERANCE_SECONDS) {
         applySeek()
@@ -233,7 +333,6 @@ function PlayerEffects({ sources, onSourceChange, onTimeUpdate, onReady, startTi
 
 /**
  * SpacebarToggle — listens for the spacebar key and toggles play/pause.
- * Must be rendered inside <Player.Provider>.
  */
 function SpacebarToggle() {
   const media = Player.useMedia()
@@ -242,7 +341,6 @@ function SpacebarToggle() {
     if (!media) return
 
     const handleKeyDown = (e) => {
-      // Only handle spacebar; ignore if user is typing in an input/textarea
       if (e.code !== 'Space' && e.key !== ' ') return
       const tag = document.activeElement?.tagName?.toLowerCase()
       if (tag === 'input' || tag === 'textarea' || tag === 'select') return
@@ -264,9 +362,6 @@ function SpacebarToggle() {
 
 /**
  * FrameStepKeys — listens for , and . keys to step one frame backward/forward.
- * Detects the actual frame duration via requestVideoFrameCallback during playback;
- * falls back to 30 fps until the real rate is known.
- * Must be rendered inside <Player.Provider>.
  */
 const FRAME_STEP_INTERVAL_MS = 150
 
@@ -274,11 +369,8 @@ function FrameStepKeys() {
   const media = Player.useMedia()
   const lastStepAt = useRef(0)
   const frameDuration = useRef(1 / 30)
-  // Prevents the play/pause frame-render trick from poisoning rVFC measurements
   const isStepping = useRef(false)
 
-  // Measure real frame duration from the video stream as it plays naturally.
-  // Callbacks that fire during our own play/pause seek trick are ignored.
   useEffect(() => {
     if (!media || typeof media.requestVideoFrameCallback !== 'function') return
 
@@ -289,8 +381,6 @@ function FrameStepKeys() {
     const onFrame = (_, metadata) => {
       if (!isStepping.current && prevMediaTime !== null && prevPresentedFrames !== null) {
         const timeDelta = metadata.mediaTime - prevMediaTime
-        // presentedFrames counts every composited frame, so dividing gives the
-        // true per-frame duration even when the callback fires every 2-4 frames
         const frameDelta = metadata.presentedFrames - prevPresentedFrames
         if (frameDelta > 0 && timeDelta > 0) {
           const perFrame = timeDelta / frameDelta
@@ -332,8 +422,6 @@ function FrameStepKeys() {
         Math.max(media.currentTime + (e.key === '.' ? frameDuration.current : -frameDuration.current), 0),
         media.duration || 0,
       )
-      // Force the browser to decode and paint the new frame even if play()
-      // has never been called (before first play the renderer stays frozen).
       media
         .play()
         .then(() => {
@@ -357,6 +445,8 @@ function FrameStepKeys() {
  *
  * Accepts the same props as the previous v8 component so that consumers
  * (Watch.js, VideoModal.js) do not need to change their usage.
+ *
+ * New: supports `audioTracks` and `trackVolumes` for dual audio playback.
  */
 const VideoJSPlayer = ({
   sources,
@@ -369,17 +459,15 @@ const VideoJSPlayer = ({
   startTime,
   className,
   style,
+  videoId,
+  audioTracks,
+  trackVolumes,
 }) => {
   const [currentSourceIndex, setCurrentSourceIndex] = useState(() => {
-    // Start with the "selected" source, or default to index 0
     const idx = sources?.findIndex((s) => s.selected)
     return idx >= 0 ? idx : 0
   })
 
-  // Reset source index when the sources actually change (e.g. new video).
-  // Compare by src URLs rather than array reference to avoid resetting the
-  // user's quality selection when the parent re-renders with a new array
-  // that contains the same sources.
   const prevSourcesRef = useRef(sources)
   useEffect(() => {
     const prevSrcs = prevSourcesRef.current?.map((s) => s.src)
@@ -394,12 +482,27 @@ const VideoJSPlayer = ({
 
   const activeSrc = sources?.[currentSourceIndex]?.src || sources?.[0]?.src
 
-  // Container styles: emulate fluid / fill behaviour
   const containerStyle = {
     maxWidth: '100%',
     ...(fill && { width: '100%', height: '100%' }),
     ...style,
   }
+
+  // Manage audio track volumes locally (initialized from prop)
+  const [localTrackVolumes, setLocalTrackVolumes] = useState(trackVolumes)
+  useEffect(() => {
+    setLocalTrackVolumes(trackVolumes)
+  }, [trackVolumes])
+
+  const handleTrackVolumeChange = useCallback((index, value) => {
+    setLocalTrackVolumes((prev) => {
+      const next = [...(prev || audioTracks?.map(() => 100) || [])]
+      next[index] = value
+      return next
+    })
+  }, [audioTracks])
+
+  const hasAudioTracks = audioTracks && audioTracks.length > 0
 
   return (
     <Player.Provider>
@@ -409,6 +512,9 @@ const VideoJSPlayer = ({
         sources={sources}
         currentSourceIndex={currentSourceIndex}
         onQualitySelect={setCurrentSourceIndex}
+        audioTracks={hasAudioTracks ? audioTracks : null}
+        trackVolumes={localTrackVolumes}
+        onTrackVolumeChange={handleTrackVolumeChange}
       >
         <Video src={activeSrc} autoPlay={autoplay} playsInline={playsinline} preload="auto" />
         {poster && <Poster src={poster} alt="" />}
@@ -422,6 +528,13 @@ const VideoJSPlayer = ({
       />
       <SpacebarToggle />
       <FrameStepKeys />
+      {hasAudioTracks && (
+        <AudioTrackSync
+          videoId={videoId || sources?.[0]?.src?.match(/id=([^&]+)/)?.[1]}
+          audioTracks={audioTracks}
+          trackVolumes={localTrackVolumes}
+        />
+      )}
     </Player.Provider>
   )
 }

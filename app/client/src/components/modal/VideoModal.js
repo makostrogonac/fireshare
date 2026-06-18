@@ -225,6 +225,8 @@ const VideoModal = ({
   const [suggestions, setSuggestions] = React.useState([])
   const [cropProcessing, setCropProcessing] = React.useState(false)
   const [playerVersion, setPlayerVersion] = React.useState(0)
+  const [audioTracks, setAudioTracks] = React.useState(null)
+  const [trackVolumes, setTrackVolumes] = React.useState(null)
 
   const playerRef = React.useRef()
   const waveformRef = React.useRef(null)
@@ -369,6 +371,22 @@ const VideoModal = ({
             setAllTags([])
           }
         }
+        try {
+          const tracksRes = await VideoService.getAudioTracks(videoId)
+          if (cancelled) return
+          const tracks = tracksRes.data?.tracks || null
+          setAudioTracks(tracks)
+          if (tracks && tracks.length > 0) {
+            setTrackVolumes(tracks.map(() => 100))
+          } else {
+            setTrackVolumes(null)
+          }
+        } catch (err) {
+          if (!cancelled) {
+            setAudioTracks(null)
+            setTrackVolumes(null)
+          }
+        }
       } catch (err) {
         if (!cancelled) setAlert({ type: 'error', message: 'Unable to load video details', open: true })
       }
@@ -384,6 +402,7 @@ const VideoModal = ({
       setCropStart(null)
       setCropEnd(null)
       setHasCustomPoster(false)
+      setAudioTracks(null)
       setPosterCacheKey(Date.now())
       if (pendingThumbnailPreview) window.URL.revokeObjectURL(pendingThumbnailPreview)
       setPendingThumbnailFile(null)
@@ -794,6 +813,9 @@ const VideoModal = ({
                     fill={true}
                     fluid={false}
                     playsinline={true}
+                    videoId={vid.video_id}
+                    audioTracks={audioTracks}
+                    trackVolumes={trackVolumes}
                   />
                   {cropProcessing && (
                     <Box
@@ -1572,6 +1594,7 @@ const VideoModal = ({
                     duration={vid.info?.duration || 0}
                     startTime={cropStart}
                     endTime={cropEnd}
+                    audioTracks={audioTracks}
                     onChange={({ startTime, endTime }) => {
                       setCropStart(startTime)
                       setCropEnd(endTime)

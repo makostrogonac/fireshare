@@ -743,14 +743,52 @@ def get_original_video():
         return Response(status=404)
 
 
+@api.route('/api/video/audio-tracks')
+def get_video_audio_tracks():
+    """
+    Returns metadata for all audio streams in a video (codec, channels, language, etc.).
+    Used by the editor to display individual audio track waveforms.
+    """
+    video_id = request.args.get('id')
+    if not video_id:
+        return jsonify({"error": "id is required"}), 400
+    if not current_user.is_authenticated:
+        video_info = VideoInfo.query.filter_by(video_id=video_id).first()
+        if video_info and video_info.password_hash and not _is_session_unlocked(video_id):
+            return jsonify({"error": "Password required"}), 403
+    try:
+        video_path = get_video_path(video_id, subid=None, quality=None)
+        streams = util.get_media_info(video_path)
+        audio_tracks = []
+        if streams:
+            for stream in streams:
+                if stream.get('codec_type') == 'audio':
+                    tags = stream.get('tags', {}) or {}
+                    audio_tracks.append({
+                        'index': stream.get('index'),
+                        'track_num': len(audio_tracks),
+                        'codec_name': stream.get('codec_name', 'unknown'),
+                        'channels': stream.get('channels', 2),
+                        'sample_rate': stream.get('sample_rate', '44100'),
+                        'title': tags.get('title', f'Track {len(audio_tracks) + 1}'),
+                        'language': tags.get('language', 'und'),
+                    })
+        return jsonify({"tracks": audio_tracks})
+    except Exception as e:
+        logger.error(f"Error getting audio tracks for {video_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @api.route('/api/video/audio')
 def get_video_audio():
     """
     Serves a tiny mono MP3 extract of the original video, used by the waveform editor.
     The extract is created on first request and cached at derived/{id}/{id}-audio.mp3.
+    Accepts optional `track` query param to extract a specific audio stream index.
     Much smaller than the full video, so WaveSurfer loads and decodes it much faster.
     """
     video_id = request.args.get('id')
+    track_index = request.args.get('track', None)
     if not video_id:
         return Response(status=400)
     if not current_user.is_authenticated:
@@ -760,12 +798,13 @@ def get_video_audio():
     try:
         paths = current_app.config['PATHS']
         derived_dir = paths['processed'] / 'derived' / video_id
-        audio_path = derived_dir / f'{video_id}-audio.mp3'
+        suffix = f'-track{track_index}' if track_index is not None else ''
+        audio_path = derived_dir / f'{video_id}-audio{suffix}.mp3'
 
         if not audio_path.exists():
             video_path = get_video_path(video_id, subid=None, quality=None)
             derived_dir.mkdir(parents=True, exist_ok=True)
-            if not util.create_audio_extract(video_path, audio_path):
+            if not util.create_audio_extract(video_path, audio_path, track_index=track_index):
                 return Response(status=500)
 
         return send_file(audio_path, mimetype='audio/mpeg', conditional=True)
