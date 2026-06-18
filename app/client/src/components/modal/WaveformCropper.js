@@ -20,6 +20,17 @@ const numInputSx = {
 }
 
 const TIMELINE_HEIGHT = 20 // px
+const LONG_VIDEO_MIN_PX_PER_SEC = 2
+const MAX_WAVEFORM_ZOOM_PX_PER_SEC = 500
+
+const formatTimelineTime = (time) => {
+  const total = Math.max(0, Math.floor(time || 0))
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
 
 /**
  * WaveformCropper — renders audio waveforms for video audio tracks
@@ -129,11 +140,34 @@ const WaveformCropper = React.forwardRef(
       endTime: e >= total - 0.05 ? null : e,
     })
 
-    // Keep the external scrollbar's inner width in sync with WaveSurfer's content width
+    const getScrollContainer = () => wsRef.current?.getWrapper()?.parentElement
+
+    const getWaveformContentWidth = () => {
+      const ws = wsRef.current
+      const wrapper = ws?.getWrapper?.()
+      const scrollContainer = getScrollContainer()
+      const dur = ws?.getDuration?.() || totalDuration || duration || 0
+      const durationWidth = dur > 0 ? Math.ceil(dur * zoomRef.current) : 0
+      return Math.max(
+        durationWidth,
+        wrapper?.scrollWidth || 0,
+        scrollContainer?.scrollWidth || 0,
+        scrollContainer?.clientWidth || 0,
+        containerRef.current?.clientWidth || 0,
+      )
+    }
+
+    const getVisibleScrollLeft = () => {
+      const ws = wsRef.current
+      const scrollContainer = getScrollContainer()
+      return ws?.getScroll?.() ?? scrollContainer?.scrollLeft ?? 0
+    }
+
+    // Keep the external scrollbar's inner width in sync with WaveSurfer's full content width.
     const syncScrollbarWidth = () => {
-      const scrollContainer = wsRef.current?.getWrapper()?.parentElement
-      if (!scrollContainer || !extScrollbarInnerRef.current) return
-      extScrollbarInnerRef.current.style.width = scrollContainer.scrollWidth + 'px'
+      const width = getWaveformContentWidth()
+      if (!width || !extScrollbarInnerRef.current) return
+      extScrollbarInnerRef.current.style.width = `${Math.ceil(width)}px`
     }
 
     // Main Wavesurfer setup
@@ -148,8 +182,10 @@ const WaveformCropper = React.forwardRef(
         const dur = ws?.getDuration() ?? 0
         if (!dur || zoomRef.current <= 0) return
 
-        const scrollLeft = ws.getScroll()
-        const pxPerSec = (ws?.getWrapper()?.offsetWidth ?? 0) / dur
+        const scrollLeft = getVisibleScrollLeft()
+        const contentWidth = getWaveformContentWidth()
+        const pxPerSec = contentWidth / dur
+        if (!pxPerSec || !isFinite(pxPerSec)) return
         const dpr = window.devicePixelRatio || 1
         const cssWidth = canvas.offsetWidth
         const cssHeight = canvas.offsetHeight
@@ -191,9 +227,7 @@ const WaveformCropper = React.forwardRef(
           ctx.stroke()
 
           if (isLabel) {
-            const m = Math.floor(t / 60)
-            const s = Math.floor(t % 60)
-            const label = `${m}:${s.toString().padStart(2, '0')}`
+            const label = formatTimelineTime(t)
             ctx.globalAlpha = 0.55
             ctx.fillStyle = '#ffffff'
             ctx.fillText(label, x + 3, 1)
@@ -223,6 +257,7 @@ const WaveformCropper = React.forwardRef(
         barGap: 1,
         barRadius: 0,
         barAlign: 'bottom',
+        minPxPerSec: LONG_VIDEO_MIN_PX_PER_SEC,
         url: audioUrl,
         fetchParams: { credentials: 'include', signal: fetchController.signal },
         plugins: [regionsPlugin],
@@ -294,10 +329,11 @@ const WaveformCropper = React.forwardRef(
         }
 
         const containerWidth = containerRef.current?.clientWidth || 500
-        const fitZoom = containerWidth / total
-        minZoomRef.current = fitZoom
-        zoomRef.current = fitZoom
-        ws.zoom(fitZoom)
+        const fitZoom = total > 0 ? containerWidth / total : LONG_VIDEO_MIN_PX_PER_SEC
+        const baseZoom = Math.min(MAX_WAVEFORM_ZOOM_PX_PER_SEC, Math.max(fitZoom, LONG_VIDEO_MIN_PX_PER_SEC))
+        minZoomRef.current = baseZoom
+        zoomRef.current = baseZoom
+        ws.zoom(baseZoom)
 
         const scrollContainer = ws.getWrapper()?.parentElement
         if (scrollContainer) {
@@ -337,26 +373,43 @@ const WaveformCropper = React.forwardRef(
       })
 
       const container = containerRef.current
+      const getTimeFromClientX = (clientX) => {
+        const ws = wsRef.current
+        const dur = ws?.getDuration?.() || 0
+        if (!ws || !dur) return null
+        const scrollContainer = getScrollContainer()
+        const rect = (scrollContainer || ws.getWrapper()).getBoundingClientRect()
+        const contentWidth = getWaveformContentWidth()
+        const scrollLeft = getVisibleScrollLeft()
+        const x = Math.max(0, Math.min(contentWidth, clientX - rect.left + scrollLeft))
+        return Math.max(0, Math.min(dur, (x / contentWidth) * dur))
+      }
+
       const handleClick = (e) => {
         const ws = wsRef.current
-        if (!ws || !ws.getDuration()) return
-        const wrapper = ws.getWrapper()
-        const rect = wrapper.getBoundingClientRect()
-        const progress = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
-        cursorTimeRef.current = progress * ws.getDuration()
+        const dur = ws?.getDuration?.() || 0
+        const time = getTimeFromClientX(e.clientX)
+        if (!ws || !dur || time == null) return
+        const progress = Math.max(0, Math.min(1, time / dur))
+        cursorTimeRef.current = time
         ws.seekTo(progress)
-        onSeekRef.current?.(cursorTimeRef.current)
+        onSeekRef.current?.(time)
       }
 
       const handleContextMenu = (e) => {
         e.preventDefault()
-        setContextMenu({ x: e.clientX, y: e.clientY, cursorTime: cursorTimeRef.current })
+        const cursorTime = getTimeFromClientX(e.clientX) ?? cursorTimeRef.current
+        cursorTimeRef.current = cursorTime
+        setContextMenu({ x: e.clientX, y: e.clientY, cursorTime })
       }
 
       const handleWheel = (e) => {
         if (e.deltaY === 0 || !wsRef.current) return
         e.preventDefault()
-        const newZoom = Math.max(minZoomRef.current, Math.min(500, zoomRef.current * (e.deltaY < 0 ? 1.3 : 0.77)))
+        const newZoom = Math.max(
+          minZoomRef.current,
+          Math.min(MAX_WAVEFORM_ZOOM_PX_PER_SEC, zoomRef.current * (e.deltaY < 0 ? 1.3 : 0.77)),
+        )
         zoomRef.current = newZoom
         wsRef.current.zoom(newZoom)
         requestAnimationFrame(() => {

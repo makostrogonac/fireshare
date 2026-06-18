@@ -20,7 +20,15 @@ const BUFFER_COUNT_WINDOW_MS = 30000
 // Create the Video.js 10 player instance (module-level singleton)
 const Player = createPlayer({ features: videoFeatures })
 
-function PlayerEffects({ sources, onSourceChange, onTimeUpdate, onReady, startTime, forceMuted = false }) {
+function PlayerEffects({
+  sources,
+  currentSourceIndex,
+  onSourceChange,
+  onTimeUpdate,
+  onReady,
+  startTime,
+  forceMuted = false,
+}) {
   const store = Player.usePlayer()
   const media = Player.useMedia()
   const currentTime = Player.usePlayer((s) => s.currentTime)
@@ -29,6 +37,8 @@ function PlayerEffects({ sources, onSourceChange, onTimeUpdate, onReady, startTi
   const startTimeApplied = useRef(false)
   const readyFired = useRef(false)
   const forcedMuteStateRef = useRef(null)
+  const pendingSourceResumeRef = useRef(null)
+  const lastReportedTimeRef = useRef(0)
 
   useEffect(() => {
     onTimeUpdateRef.current = onTimeUpdate
@@ -36,8 +46,16 @@ function PlayerEffects({ sources, onSourceChange, onTimeUpdate, onReady, startTi
   }, [onTimeUpdate, onReady])
 
   useEffect(() => {
+    const playedSeconds = currentTime || 0
+    const pendingResume = pendingSourceResumeRef.current
+    if (playedSeconds > 0 || !pendingResume) {
+      lastReportedTimeRef.current = playedSeconds
+    }
+    // During a source switch the browser briefly reports currentTime=0. Ignore that
+    // transient value so editor/watch progress bars do not jump back to the start.
+    if (pendingResume && playedSeconds === 0 && pendingResume.time > SEEK_TOLERANCE_SECONDS) return
     if (onTimeUpdateRef.current) {
-      onTimeUpdateRef.current({ playedSeconds: currentTime || 0 })
+      onTimeUpdateRef.current({ playedSeconds })
     }
   }, [currentTime])
 
@@ -156,6 +174,52 @@ function PlayerEffects({ sources, onSourceChange, onTimeUpdate, onReady, startTi
     }
   }, [media, startTime])
 
+  // --- Source switch resume: preserve time/play state through quality changes -
+  useEffect(() => {
+    if (!media) return undefined
+
+    const applyPendingResume = (shouldTryPlay = false) => {
+      const pending = pendingSourceResumeRef.current
+      if (!pending) return
+
+      if (media.readyState >= 1 && !pending.seekApplied) {
+        const hasDuration = Number.isFinite(media.duration) && media.duration > 0
+        const target = hasDuration ? Math.min(pending.time, Math.max(0, media.duration - 0.25)) : pending.time
+        if (target > 0 && Math.abs(media.currentTime - target) > SEEK_TOLERANCE_SECONDS) {
+          try {
+            media.currentTime = target
+          } catch {
+            // Ignore seek failures while the new source is still loading.
+          }
+        }
+        if (pending.playbackRate) media.playbackRate = pending.playbackRate
+        pending.seekApplied = true
+      }
+
+      if (pending.wasPlaying && shouldTryPlay && media.readyState >= 2) {
+        pendingSourceResumeRef.current = null
+        media.play()?.catch(() => {})
+      } else if (!pending.wasPlaying && pending.seekApplied) {
+        pendingSourceResumeRef.current = null
+      }
+    }
+
+    const handleLoadedMetadata = () => applyPendingResume(false)
+    const handleCanPlay = () => applyPendingResume(true)
+
+    media.addEventListener('loadedmetadata', handleLoadedMetadata)
+    media.addEventListener('canplay', handleCanPlay)
+    media.addEventListener('canplaythrough', handleCanPlay)
+
+    applyPendingResume(media.readyState >= 2)
+
+    return () => {
+      media.removeEventListener('loadedmetadata', handleLoadedMetadata)
+      media.removeEventListener('canplay', handleCanPlay)
+      media.removeEventListener('canplaythrough', handleCanPlay)
+    }
+  }, [media])
+
   // --- Auto-downgrade: switch to lower quality on buffering / error ----------
   useEffect(() => {
     if (!media || !sources || sources.length <= 1) return
@@ -180,10 +244,17 @@ function PlayerEffects({ sources, onSourceChange, onTimeUpdate, onReady, startTi
     }
 
     const switchToNextSource = () => {
-      onSourceChange((prev) => {
-        if (prev + 1 < sources.length) return prev + 1
-        return prev
-      })
+      const nextIndex = currentSourceIndex + 1
+      if (nextIndex >= sources.length) return
+
+      const resumeTime = media.currentTime || lastReportedTimeRef.current || 0
+      pendingSourceResumeRef.current = {
+        time: resumeTime,
+        wasPlaying: !media.paused,
+        playbackRate: media.playbackRate || 1,
+        seekApplied: false,
+      }
+      onSourceChange(nextIndex)
     }
 
     const handleError = () => {
@@ -259,7 +330,7 @@ function PlayerEffects({ sources, onSourceChange, onTimeUpdate, onReady, startTi
       media.removeEventListener('pause', handlePlayingOrPause)
       media.removeEventListener('seeked', handlePlayingOrPause)
     }
-  }, [media, sources, onSourceChange])
+  }, [media, sources, currentSourceIndex, onSourceChange])
 
   return null
 }
@@ -431,6 +502,7 @@ const VideoJSPlayer = ({
       </CustomVideoSkin>
       <PlayerEffects
         sources={sources}
+        currentSourceIndex={currentSourceIndex}
         onSourceChange={setCurrentSourceIndex}
         onTimeUpdate={onTimeUpdate}
         onReady={onReady}

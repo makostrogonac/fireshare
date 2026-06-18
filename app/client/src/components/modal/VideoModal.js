@@ -391,6 +391,10 @@ function AudioPreviewSync({ videoId, audioTracks, trackSettings, playerRef }) {
 
       const isPaused = player.paused?.() ?? true
       const currentTime = player.currentTime?.() ?? 0
+      const haveFutureData = media?.HAVE_FUTURE_DATA ?? 3
+      const isBuffering = Boolean(
+        media && !isPaused && !media.ended && (media.seeking || media.readyState < haveFutureData),
+      )
 
       audioRefs.current.forEach((audio, i) => {
         if (!audio) return
@@ -402,8 +406,15 @@ function AudioPreviewSync({ videoId, audioTracks, trackSettings, playerRef }) {
         // Without it, fall back to normal element volume capped at 100%.
         audio.volume = audioContextRef.current ? 1 : Math.min(1, gain)
         audio.muted = false
+        if (media?.playbackRate) audio.playbackRate = media.playbackRate
 
         const drift = Math.abs(audio.currentTime - currentTime)
+        if (isBuffering) {
+          if (drift > 0.05) audio.currentTime = currentTime
+          if (!audio.paused) audio.pause()
+          return
+        }
+
         if (drift > 0.25 || (!isPaused && audio.paused)) {
           audio.currentTime = currentTime
         }
