@@ -295,6 +295,41 @@ def get_video_duration(path):
         logger.debug(f'Could not extract video duration: {ex}')
     return None
 
+def get_video_framerate(path):
+    """
+    Get the video frame rate as a float (frames per second).
+
+    Uses the stream's r_frame_rate (constant/max frame rate) and falls back to
+    avg_frame_rate for variable-frame-rate sources. Returns None if it cannot
+    be determined.
+    """
+    try:
+        streams = get_media_info(path)
+        if not streams:
+            return None
+        vstream = next((s for s in streams if s.get('codec_type') == 'video'), None)
+        if not vstream:
+            return None
+        for key in ('r_frame_rate', 'avg_frame_rate'):
+            raw = vstream.get(key)
+            if not raw or raw == '0/0':
+                continue
+            try:
+                parts = raw.split('/')
+                num = float(parts[0])
+                den = float(parts[1]) if len(parts) > 1 else 1.0
+                if den == 0:
+                    continue
+                fps = num / den
+                if fps > 0:
+                    return fps
+            except (ValueError, IndexError):
+                continue
+        return None
+    except Exception as ex:
+        logger.debug(f'Could not extract video framerate: {ex}')
+    return None
+
 def validate_video_file(path, timeout=30):
     """
     Validate that a video file is not corrupt and can be decoded.
@@ -1012,28 +1047,32 @@ def _get_encoder_candidates(use_gpu=False, encoder_preference='auto'):
         'video_codec': 'libx264',
         'audio_codec': 'aac',
         'audio_bitrate': '128k',
-        'extra_args': ['-preset', 'fast', '-crf', '23']
+        # slow preset + higher CRF for stronger compression (smaller files)
+        'extra_args': ['-preset', 'slow', '-crf', '26']
     }
     av1_cpu = {
         'name': 'AV1 CPU',
         'video_codec': 'libsvtav1',
         'audio_codec': 'libopus',
         'audio_bitrate': '96k',
-        'extra_args': ['-preset', '6', '-crf', '30', '-b:v', '0', '-movflags', '+faststart']
+        # lower preset (slower) + higher CRF for stronger compression
+        'extra_args': ['-preset', '4', '-crf', '32', '-b:v', '0', '-movflags', '+faststart']
     }
     h264_nvenc = {
         'name': 'H.264 NVENC',
         'video_codec': 'h264_nvenc',
         'audio_codec': 'aac',
         'audio_bitrate': '128k',
-        'extra_args': ['-preset', 'p4', '-cq:v', '23']
+        # p5 (slower/better) + higher CQ for stronger compression
+        'extra_args': ['-preset', 'p5', '-tune', 'hq', '-rc', 'vbr', '-cq:v', '27', '-b:v', '0']
     }
     av1_nvenc = {
         'name': 'AV1 NVENC',
         'video_codec': 'av1_nvenc',
         'audio_codec': 'libopus',
         'audio_bitrate': '96k',
-        'extra_args': ['-preset', 'p4', '-cq:v', '30']
+        # p5 (slower/better) + higher CQ for stronger compression
+        'extra_args': ['-preset', 'p5', '-rc', 'vbr', '-cq:v', '33', '-b:v', '0']
     }
 
     if encoder_preference == 'h264':
@@ -1245,12 +1284,15 @@ def check_nvenc_10bit_support(encoder_name):
         return False
 
 
-def _build_transcode_command(video_path, out_path, height, encoder, input_decoder=None):
+def _build_transcode_command(video_path, out_path, height, encoder, input_decoder=None, source_fps=None):
     """Build an ffmpeg command for transcoding with the given encoder.
 
     When the source video is 10-bit and the chosen NVENC encoder does not
     support 10-bit output, automatically inserts ``-pix_fmt yuv420p`` so the
     encode does not fail with a pixel-format error.
+
+    When ``source_fps`` exceeds 60, the output framerate is capped at 60fps.
+    Sources at or below 60fps are left at their original framerate.
     """
     cmd = ['ffmpeg', '-v', 'warning', '-stats', '-y']
     if input_decoder:
@@ -1273,7 +1315,16 @@ def _build_transcode_command(video_path, out_path, height, encoder, input_decode
     if 'extra_args' in encoder:
         cmd.extend(encoder['extra_args'])
 
-    cmd.extend(['-vf', f'scale=-2:{height}'])
+    # Build the video filter chain: scale to the target height (preserving
+    # aspect ratio) and cap the framerate at 60fps when the source exceeds it.
+    # Sources at or below 60fps are passed through at their original framerate
+    # so the fps filter never duplicates frames.
+    vf = f'scale=-2:{height}'
+    if source_fps and source_fps > 60:
+        logger.info(f'Source framerate is {source_fps:.2f}fps, capping output at 60fps')
+        vf = f'{vf},fps=60'
+    cmd.extend(['-vf', vf])
+
     cmd.extend(['-c:a', encoder['audio_codec'], '-b:a', encoder.get('audio_bitrate', '128k')])
     cmd.append(str(out_path))
 
@@ -1321,6 +1372,12 @@ def transcode_video_quality(video_path, out_path, height, use_gpu=False, timeout
     # Get video duration for progress logging
     total_duration = get_video_duration(video_path) or 0
 
+    # Detect source framerate once so the output can be capped at 60fps when
+    # the source exceeds it (sub-60fps sources are left untouched).
+    source_fps = get_video_framerate(video_path)
+    if source_fps and source_fps > 60:
+        logger.info(f'Source video is {source_fps:.2f}fps; output will be capped at 60fps')
+
     # Calculate smart timeout based on video duration if not provided
     if timeout_seconds is None:
         timeout_seconds = calculate_transcode_timeout(video_path)
@@ -1351,7 +1408,7 @@ def transcode_video_quality(video_path, out_path, height, use_gpu=False, timeout
 
         # Build ffmpeg command using the cached encoder
         logger.info(f"Transcoding video to {height}p using {encoder['name']}")
-        cmd = _build_transcode_command(video_path, tmp_path, height, encoder, input_decoder=preferred_decoder)
+        cmd = _build_transcode_command(video_path, tmp_path, height, encoder, input_decoder=preferred_decoder, source_fps=source_fps)
 
         logger.debug(f"$: {' '.join(cmd)}")
 
@@ -1489,7 +1546,7 @@ def transcode_video_quality(video_path, out_path, height, use_gpu=False, timeout
         logger.debug(f"Trying {encoder['name']}...")
 
         # Build ffmpeg command targeting the temp path
-        cmd = _build_transcode_command(video_path, tmp_path, height, encoder, input_decoder=preferred_decoder)
+        cmd = _build_transcode_command(video_path, tmp_path, height, encoder, input_decoder=preferred_decoder, source_fps=source_fps)
 
         logger.debug(f"$: {' '.join(cmd)}")
 
