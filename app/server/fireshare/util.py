@@ -547,7 +547,11 @@ def create_video_crop_with_audio(
         label_names = []
 
         for i, t in enumerate(audio_tracks):
-            vol = max(0, min(10, (t.get('volume_pct', 100) / 100.0)))
+            try:
+                vol = float(t.get('volume_pct', 100)) / 100.0
+            except (TypeError, ValueError):
+                vol = 1.0
+            vol = max(0, vol)
             label = f'a{i}'
             filter_parts.append(f'[0:a:{t["track_index"]}]volume={vol}[{label}]')
             label_names.append(f'[{label}]')

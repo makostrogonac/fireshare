@@ -224,7 +224,7 @@ function AudioTrackMixer({ audioTracks, trackSettings, onTrackSettingChange }) {
             .join(' · ')
 
           const setVolume = (value) => {
-            const v = Math.max(0, Math.min(200, value))
+            const v = Math.max(0, value)
             onTrackSettingChange?.(track.track_num, { enabled, volume: v })
           }
 
@@ -267,7 +267,7 @@ function AudioTrackMixer({ audioTracks, trackSettings, onTrackSettingChange }) {
                 <Typography sx={{ fontSize: 10, color: '#FFFFFF66', width: 38 }}>Volume</Typography>
                 <Slider
                   size="small"
-                  value={volume}
+                  value={Math.min(volume, 200)}
                   min={0}
                   max={200}
                   disabled={!enabled}
@@ -284,7 +284,6 @@ function AudioTrackMixer({ audioTracks, trackSettings, onTrackSettingChange }) {
                     component="input"
                     type="number"
                     min="0"
-                    max="200"
                     value={volume}
                     disabled={!enabled}
                     onChange={(e) => {
@@ -397,9 +396,9 @@ function AudioPreviewSync({ videoId, audioTracks, trackSettings, playerRef }) {
         if (!audio) return
         const trackNum = previewTracks[i]?.track_num
         const ts = trackSettingsRef.current?.find((s) => s.track_num === trackNum)
-        const gain = ts?.enabled ? Math.max(0, Math.min(2, (ts.volume ?? 100) / 100)) : 0
+        const gain = ts?.enabled ? Math.max(0, (ts.volume ?? 100) / 100) : 0
         if (gainNodesRef.current[i]) gainNodesRef.current[i].gain.value = gain
-        // When Web Audio is available, gain node controls volume up to 200%.
+        // When Web Audio is available, gain node controls boosted volume above 100%.
         // Without it, fall back to normal element volume capped at 100%.
         audio.volume = audioContextRef.current ? 1 : Math.min(1, gain)
         audio.muted = false

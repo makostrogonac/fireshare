@@ -617,7 +617,7 @@ const WaveformCropper = React.forwardRef(
                   </Typography>
                   <Slider
                     size="small"
-                    value={volume}
+                    value={Math.min(volume, 200)}
                     onChange={(_, v) =>
                       onTrackSettingChange?.(t.track_num, { enabled, volume: v })
                     }
@@ -636,12 +636,11 @@ const WaveformCropper = React.forwardRef(
                       component="input"
                       type="number"
                       min="0"
-                      max="200"
                       value={volume}
                       disabled={!enabled}
                       onChange={(e) => {
                         const v = parseInt(e.target.value, 10)
-                        if (!isNaN(v) && v >= 0 && v <= 200) {
+                        if (!isNaN(v) && v >= 0) {
                           onTrackSettingChange?.(t.track_num, { enabled, volume: v })
                         }
                       }}
