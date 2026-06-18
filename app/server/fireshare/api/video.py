@@ -40,6 +40,27 @@ def _delete_if_exists(path):
         path.unlink()
 
 
+def _parse_audio_track_index(value):
+    """Parse a query/payload track index as a non-negative audio-stream index."""
+    if value is None:
+        return None
+    try:
+        track_index = int(value)
+    except (TypeError, ValueError):
+        return None
+    return track_index if track_index >= 0 else None
+
+
+def _normalize_audio_tracks_for_video(video_path, audio_tracks):
+    """Normalize request audio_tracks and return (normalized, error_message)."""
+    if audio_tracks is None:
+        return None, None
+    try:
+        return util.normalize_audio_tracks(video_path, audio_tracks), None
+    except ValueError as ex:
+        return None, str(ex)
+
+
 def _get_transcode_runtime_config(paths):
     """Return the same GPU/encoder settings used by the normal transcode CLI."""
     use_gpu = current_app.config.get('TRANSCODE_GPU', False)
@@ -610,6 +631,18 @@ def handle_video_details(id):
             new_end   = data.pop('end_time',   _UNSET)
             audio_tracks = data.pop('audio_tracks', None)
 
+            render_paths = None
+            render_video = None
+            if audio_tracks is not None:
+                render_paths = current_app.config['PATHS']
+                render_video = Video.query.filter_by(video_id=id).first()
+                if not render_video:
+                    return jsonify({'message': 'Video not found'}), 404
+                original_path = render_paths["processed"] / "video_links" / f"{render_video.video_id}{render_video.extension}"
+                audio_tracks, audio_error = _normalize_audio_tracks_for_video(original_path, audio_tracks)
+                if audio_error:
+                    return Response(status=400, response=audio_error)
+
             # Update remaining VideoInfo fields generically
             if data:
                 db.session.query(VideoInfo).filter_by(video_id=id).update(data)
@@ -660,8 +693,8 @@ def handle_video_details(id):
                     video_info.end_time   = resolved_end
                     db.session.commit()
 
-                paths = current_app.config['PATHS']
-                video = Video.query.filter_by(video_id=id).first()
+                paths = render_paths or current_app.config['PATHS']
+                video = render_video or Video.query.filter_by(video_id=id).first()
 
                 if resolved_start is None and resolved_end is None and not audio_render_requested:
                     # Clearing the crop — delete crop files and re-transcode from original.
@@ -833,11 +866,14 @@ def get_video_audio():
     Accepts optional `track` query param as an audio-only stream index.
     """
     video_id = request.args.get('id')
-    track_index = request.args.get('track', None)
+    track_arg = request.args.get('track', None)
+    track_index = _parse_audio_track_index(track_arg)
     quality = request.args.get('quality', 'waveform')
     original_quality = track_index is not None and quality == 'original'
     if not video_id:
         return Response(status=400)
+    if track_arg is not None and track_index is None:
+        return Response(status=400, response='Invalid audio track index')
     if not current_user.is_authenticated:
         video_info = VideoInfo.query.filter_by(video_id=video_id).first()
         if video_info and video_info.password_hash and not _is_session_unlocked(video_id):

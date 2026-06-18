@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Box, Typography, CircularProgress, Menu, MenuItem, Button, Slider, Checkbox, Tabs, Tab } from '@mui/material'
 import WaveSurfer from 'wavesurfer.js'
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js'
@@ -74,10 +74,25 @@ const WaveformCropper = React.forwardRef(
     const isReadyRef = useRef(false)
     const cursorTimeRef = useRef(0)
 
-    // Track list
-    const tracks = audioTracks && audioTracks.length > 0 ? audioTracks : [{ track_num: 0, title: 'Default', index: 0 }]
+    const hasRealAudioTracks = audioTracks && audioTracks.length > 0
+    const tracks = React.useMemo(
+      () => (hasRealAudioTracks ? audioTracks : [{ title: 'Default', index: 0 }]),
+      [audioTracks, hasRealAudioTracks],
+    )
     const [activeTrack, setActiveTrack] = useState(0)
+    const activeTrackInfo = tracks[Math.min(activeTrack, tracks.length - 1)]
+    const activeTrackNum = activeTrackInfo?.track_num
+    const audioUrl = React.useMemo(() => {
+      if (activeTrackNum != null) {
+        return `${getUrl()}/api/video/audio?id=${videoId}&track=${activeTrackNum}&quality=waveform`
+      }
+      return `${getUrl()}/api/video/audio?id=${videoId}&quality=waveform`
+    }, [videoId, activeTrackNum])
     const [contextMenu, setContextMenu] = useState(null)
+
+    useEffect(() => {
+      if (activeTrack >= tracks.length) setActiveTrack(0)
+    }, [activeTrack, tracks.length])
 
     useEffect(() => {
       onSeekRef.current = onSeek
@@ -120,15 +135,6 @@ const WaveformCropper = React.forwardRef(
       if (!scrollContainer || !extScrollbarInnerRef.current) return
       extScrollbarInnerRef.current.style.width = scrollContainer.scrollWidth + 'px'
     }
-
-    // Build the audio URL based on active track
-    const buildAudioUrl = useCallback(() => {
-      const t = tracks[activeTrack]
-      if (t && t.track_num != null) {
-        return `${getUrl()}/api/video/audio?id=${videoId}&track=${t.track_num}&quality=waveform`
-      }
-      return `${getUrl()}/api/video/audio?id=${videoId}&quality=waveform`
-    }, [videoId, activeTrack, tracks])
 
     // Main Wavesurfer setup
     useEffect(() => {
@@ -200,7 +206,6 @@ const WaveformCropper = React.forwardRef(
       regionsPluginRef.current = regionsPlugin
 
       const fetchController = new AbortController()
-      const audioUrl = buildAudioUrl()
 
       const ws = WaveSurfer.create({
         container: containerRef.current,
@@ -372,8 +377,9 @@ const WaveformCropper = React.forwardRef(
         container.removeEventListener('contextmenu', handleContextMenu)
         container.removeEventListener('wheel', handleWheel)
       }
+      // Recreate WaveSurfer only when the active waveform URL changes.
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [videoId, activeTrack])
+    }, [audioUrl])
 
     const handleExternalScroll = () => {
       if (isSyncingScroll.current) return
@@ -573,7 +579,7 @@ const WaveformCropper = React.forwardRef(
         </Box>
 
         {/* Per-track selection and volume controls */}
-        {tracks.length > 0 && (
+        {hasRealAudioTracks && tracks.length > 0 && (
           <Box sx={{ mt: 1.5, display: 'flex', flexDirection: 'column', gap: 1 }}>
             <Typography sx={labelSx}>
               Audio Tracks ({enabledCount} enabled)

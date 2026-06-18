@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import json
+import math
 import subprocess as sp
 import xxhash
 from fireshare import logger
@@ -406,9 +407,13 @@ def create_video_crop(source_path, out_path, start_time=None, end_time=None):
 
 def get_audio_stream_by_track_index(source_path, track_index):
     """Return ffprobe metadata for the Nth audio stream (audio-only index)."""
-    try:
+    if isinstance(track_index, bool):
+        return None
+    if isinstance(track_index, int):
+        idx = track_index
+    elif isinstance(track_index, str) and track_index.isdigit():
         idx = int(track_index)
-    except (TypeError, ValueError):
+    else:
         return None
     if idx < 0:
         return None
@@ -417,6 +422,51 @@ def get_audio_stream_by_track_index(source_path, track_index):
     if idx >= len(audio_streams):
         return None
     return audio_streams[idx]
+
+
+def normalize_audio_tracks(source_path, audio_tracks):
+    """Validate and normalize editor audio track render settings.
+
+    Returns a list of {track_index: int, volume_pct: float}. Raises ValueError for
+    malformed settings or track indexes that do not exist in the source video.
+    """
+    if audio_tracks is None:
+        return None
+    if not isinstance(audio_tracks, list):
+        raise ValueError('audio_tracks must be a list')
+
+    streams = get_media_info(source_path) or []
+    audio_streams = [s for s in streams if s.get('codec_type') == 'audio']
+
+    normalized = []
+    for item in audio_tracks:
+        if not isinstance(item, dict):
+            raise ValueError('each audio track setting must be an object')
+        raw_track_index = item.get('track_index')
+        if isinstance(raw_track_index, bool):
+            raise ValueError('audio track index must be a non-negative integer')
+        if isinstance(raw_track_index, int):
+            track_index = raw_track_index
+        elif isinstance(raw_track_index, str) and raw_track_index.isdigit():
+            track_index = int(raw_track_index)
+        else:
+            raise ValueError('audio track index must be a non-negative integer')
+        if track_index < 0:
+            raise ValueError('audio track index must be a non-negative integer')
+        if track_index >= len(audio_streams):
+            raise ValueError(f'audio track index {track_index} does not exist')
+
+        try:
+            volume_pct = float(item.get('volume_pct', 100))
+        except (TypeError, ValueError):
+            raise ValueError('audio track volume must be numeric')
+        if not math.isfinite(volume_pct):
+            raise ValueError('audio track volume must be finite')
+        volume_pct = max(0.0, volume_pct)
+
+        normalized.append({'track_index': track_index, 'volume_pct': volume_pct})
+
+    return normalized
 
 
 def get_audio_copy_container(codec_name):
@@ -448,6 +498,11 @@ def create_audio_extract(source_path, out_path, track_index=None, original_quali
     """
     cmd = ['ffmpeg', '-v', 'quiet', '-y', '-i', str(source_path)]
     if track_index is not None:
+        stream = get_audio_stream_by_track_index(source_path, track_index)
+        if stream is None:
+            logger.error(f'Invalid audio track index for extract: {track_index}')
+            return False
+        track_index = int(track_index)
         cmd += ['-map', f'0:a:{track_index}']
 
     if original_quality and track_index is not None:
@@ -488,6 +543,12 @@ def create_video_crop_with_audio(
     if audio_tracks is None:
         return create_video_crop(source_path, out_path, start_time, end_time)
 
+    try:
+        audio_tracks = normalize_audio_tracks(source_path, audio_tracks)
+    except ValueError as ex:
+        logger.error(f'Invalid audio track render settings for {source_path}: {ex}')
+        return False
+
     cmd = ['ffmpeg', '-y']
     if start_time:
         cmd += ['-ss', str(start_time)]
@@ -500,10 +561,7 @@ def create_video_crop_with_audio(
         cmd += ['-map', '0:v:0', '-c:v', 'copy', '-an', '-movflags', '+faststart', str(out_path)]
     else:
         num_tracks = len(audio_tracks)
-        try:
-            unchanged_single_track_volume = float(audio_tracks[0].get('volume_pct', 100)) == 100
-        except (TypeError, ValueError):
-            unchanged_single_track_volume = False
+        unchanged_single_track_volume = math.isclose(audio_tracks[0]['volume_pct'], 100.0)
         if num_tracks == 1 and unchanged_single_track_volume:
             # One selected track at unchanged volume can be stream-copied exactly.
             cmd += [
@@ -547,11 +605,7 @@ def create_video_crop_with_audio(
         label_names = []
 
         for i, t in enumerate(audio_tracks):
-            try:
-                vol = float(t.get('volume_pct', 100)) / 100.0
-            except (TypeError, ValueError):
-                vol = 1.0
-            vol = max(0, vol)
+            vol = t['volume_pct'] / 100.0
             label = f'a{i}'
             filter_parts.append(f'[0:a:{t["track_index"]}]volume={vol}[{label}]')
             label_names.append(f'[{label}]')

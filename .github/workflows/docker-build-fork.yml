@@ -20,8 +20,11 @@ on:
         required: false
         default: ''
 
+concurrency:
+  group: docker-build-fork-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
-  # ── Replace with your own Docker Hub / GHCR coordinates ──────────────────
   REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/fireshare
 
 jobs:
@@ -109,11 +112,13 @@ jobs:
 
       - name: Determine tags
         id: tags
+        env:
+          REQUESTED_TAG: ${{ github.event.inputs.tag || '' }}
         run: |
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            TAG="${{ github.event.inputs.tag }}"
-          else
-            TAG="latest"
+          TAG="${REQUESTED_TAG:-latest}"
+          if ! [[ "$TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "Invalid Docker tag: $TAG" >&2
+            exit 1
           fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 

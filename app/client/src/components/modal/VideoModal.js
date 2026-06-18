@@ -186,10 +186,8 @@ const DateField = ({ selectedDate, selectedTime, onDateChange, onTimeChange }) =
 // ─── Component ────────────────────────────────────────────────────────────────
 
 /**
- * AudioPreviewSync — plays selected original-quality audio tracks alongside the
- * video during editing so the user can judge the final mix before saving.
- * The main video element is muted while this preview is mounted to avoid doubling
- * the browser-selected default audio track.
+ * AudioTrackMixer — visible editor controls for choosing included tracks and
+ * setting per-track volume in the final saved mix.
  */
 function AudioTrackMixer({ audioTracks, trackSettings, onTrackSettingChange }) {
   if (!audioTracks || audioTracks.length === 0) return null
