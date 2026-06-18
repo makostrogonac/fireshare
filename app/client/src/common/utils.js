@@ -28,11 +28,47 @@ export const getPublicWatchUrl = () => {
     : `${window.location.protocol}//${window.location.hostname}${portWithColon}/w/`
 }
 
+// Base origin used for public share links. Honors the configured
+// shareable_link_domain so shared URLs are stable regardless of how the
+// sharing user reached the site.
+export const getPublicBaseUrl = () => {
+  const shareableLinkDomain = getSetting('ui_config')?.['shareable_link_domain']
+  if (shareableLinkDomain) {
+    return shareableLinkDomain
+  }
+  const portWithColon = window.location.port ? `:${window.location.port}` : ''
+  return isLocalhost
+    ? `http://${window.location.hostname}:${import.meta.env.VITE_SERVER_PORT || window.location.port}`
+    : `${window.location.protocol}//${window.location.hostname}${portWithColon}`
+}
+
+// Direct stream URL for a video at 720p. Always uses the /api/video endpoint
+// (proxied to Flask in production) so the server can fall back to the cropped
+// master or original when a 720p transcode is not yet available, and so the
+// response is a stable video/mp4 that Discord embeds as a bare inline player
+// (no OpenGraph card) when used in a direct/mp4-style embed. When a share token
+// is supplied it is appended so password-protected shared videos are accessible.
+export const getDirectEmbedStreamUrl = (videoId, token) => {
+  const base = `${getPublicBaseUrl()}/api/video?id=${videoId}&quality=720p`
+  return token ? `${base}&s=${token}` : base
+}
+
 // U+3164 HANGUL FILLER renders as blank text but still satisfies Discord's
 // markdown link syntax, so sending only this link shows just the video embed.
 export const DISCORD_BLANK_LINK_TEXT = '\u3164'
 
-export const getDiscordEmbedMarkdownLink = (videoId) => `[${DISCORD_BLANK_LINK_TEXT}](${getPublicWatchUrl()}${videoId})`
+// Markdown link whose text is a blank character and whose target is the direct
+// 720p stream URL. Pasting this in Discord embeds the video as a bare inline
+// player (like sending a direct .mp4 link) with no visible link text/card.
+export const getDiscordEmbedMarkdownLink = (videoId, token) =>
+  `[${DISCORD_BLANK_LINK_TEXT}](${getDirectEmbedStreamUrl(videoId, token)})`
+
+// Public /w/<id> watch link. When a share token is supplied it is appended as
+// ?s=<token> so shared password-protected videos are watchable by anyone.
+export const getPublicWatchLink = (videoId, token) => {
+  const url = `${getPublicWatchUrl()}${videoId}`
+  return token ? `${url}?s=${token}` : url
+}
 
 export const getVideoPath = (id, extension) => {
   if (extension === '.mkv') {
@@ -212,10 +248,18 @@ export const getImageUrl = (imageId) => {
  * @param {string} extension - Video file extension (e.g., '.mp4', '.mkv')
  * @returns {Array} Array of video sources for Video.js
  */
-export const getVideoSources = (videoId, videoInfo, extension, { forceOriginal = false } = {}) => {
+export const getVideoSources = (videoId, videoInfo, extension, { forceOriginal = false, shareToken } = {}) => {
   const sources = []
   const URL = getUrl()
   const SERVED_BY = getServedBy()
+
+  // Append the share token as a query parameter so nginx auth_request and Flask
+  // stream endpoints can validate it without relying on the 1-hour session unlock.
+  const withToken = (url) => {
+    if (!shareToken) return url
+    const sep = url.includes('?') ? '&' : '?'
+    return `${url}${sep}s=${encodeURIComponent(shareToken)}`
+  }
 
   const has480p = videoInfo?.has_480p
   const has720p = videoInfo?.has_720p
@@ -233,7 +277,7 @@ export const getVideoSources = (videoId, videoInfo, extension, { forceOriginal =
         : getVideoUrl(videoId, 'original', extension)
 
   sources.push({
-    src: sourceUrl,
+    src: withToken(sourceUrl),
     type: 'video/mp4',
     label: 'Source',
     selected: true,
@@ -241,7 +285,7 @@ export const getVideoSources = (videoId, videoInfo, extension, { forceOriginal =
 
   if (has1080p) {
     sources.push({
-      src: getVideoUrl(videoId, '1080p', extension),
+      src: withToken(getVideoUrl(videoId, '1080p', extension)),
       type: 'video/mp4',
       label: '1080p',
     })
@@ -249,7 +293,7 @@ export const getVideoSources = (videoId, videoInfo, extension, { forceOriginal =
 
   if (has720p) {
     sources.push({
-      src: getVideoUrl(videoId, '720p', extension),
+      src: withToken(getVideoUrl(videoId, '720p', extension)),
       type: 'video/mp4',
       label: '720p',
     })
@@ -257,7 +301,7 @@ export const getVideoSources = (videoId, videoInfo, extension, { forceOriginal =
 
   if (has480p) {
     sources.push({
-      src: getVideoUrl(videoId, '480p', extension),
+      src: withToken(getVideoUrl(videoId, '480p', extension)),
       type: 'video/mp4',
       label: '480p',
     })

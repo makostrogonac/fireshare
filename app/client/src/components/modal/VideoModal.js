@@ -20,6 +20,7 @@ import {
   Typography,
 } from '@mui/material'
 import TagChip from '../ui/TagChip'
+import VideoShareMenu from '../ui/VideoShareMenu'
 import { motion } from 'framer-motion'
 import { DayPicker } from 'react-day-picker'
 import ContentCopyIcon from '@mui/icons-material/ContentCopy'
@@ -28,7 +29,6 @@ import AccessTimeIcon from '@mui/icons-material/AccessTime'
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth'
 import CloseIcon from '@mui/icons-material/Close'
 import CheckIcon from '@mui/icons-material/Check'
-import ShareIcon from '@mui/icons-material/Share'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import LockIcon from '@mui/icons-material/Lock'
 import AddPhotoAlternateIcon from '@mui/icons-material/AddPhotoAlternate'
@@ -43,7 +43,6 @@ import {
   getUrl,
   getVideoSources,
   getSetting,
-  getDiscordEmbedMarkdownLink,
   getPosterUrl as getVideoPosterUrl,
 } from '../../common/utils'
 import { ConfigService, VideoService, GameService, TagService } from '../../services'
@@ -995,7 +994,9 @@ const VideoModal = ({
       const time = playerRef.current.currentTime()
       currentTime = time && !isNaN(time) ? time : 0
     }
-    copyToClipboard(`${PURL}${vid.video_id}?t=${currentTime}`)
+    const token = vid.info?.has_password ? vid.info?.share_token : undefined
+    const tokenParam = token ? `&s=${encodeURIComponent(token)}` : ''
+    copyToClipboard(`${PURL}${vid.video_id}?t=${currentTime}${tokenParam}`)
     setAlert({ type: 'info', message: 'Time stamped link copied to clipboard', open: true })
   }
 
@@ -1941,18 +1942,14 @@ const VideoModal = ({
                       </Tooltip>
                     )}
 
-                    <Tooltip title="Copy Discord embed">
-                      <IconButton
-                        size="small"
-                        onClick={() => {
-                          copyToClipboard(getDiscordEmbedMarkdownLink(vid.video_id))
-                          setAlert({ type: 'info', message: 'Discord embed link copied to clipboard', open: true })
-                        }}
-                        sx={actionBtnSx}
-                      >
-                        <ShareIcon sx={{ fontSize: 20 }} />
-                      </IconButton>
-                    </Tooltip>
+                    <VideoShareMenu
+                      videoId={vid.video_id}
+                      shareToken={vid.info?.has_password ? vid.info?.share_token : undefined}
+                      onCopied={(message) => setAlert({ type: 'info', message, open: true })}
+                      buttonSx={actionBtnSx}
+                      iconSx={{ fontSize: 20 }}
+                      tooltip="Share"
+                    />
 
                     <Tooltip title="Copy timestamp link">
                       <IconButton size="small" onClick={copyTimestamp} sx={actionBtnSx}>

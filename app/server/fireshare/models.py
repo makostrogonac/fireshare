@@ -61,6 +61,10 @@ class VideoInfo(db.Model):
     end_time      = db.Column(db.Float, nullable=True)
     has_crop      = db.Column(db.Boolean, default=False)
     password_hash = db.Column(db.String(256), nullable=True)
+    # Stable per-video token that grants view access when appended as ?s=<token>.
+    # Used by share links so shared videos (including password-protected ones)
+    # are watchable by anyone who has the link, without exposing the password.
+    share_token   = db.Column(db.String(64), nullable=True, unique=True, index=True)
 
     video       = db.relationship("Video", back_populates="info", uselist=False, lazy="joined")
 
@@ -87,7 +91,12 @@ class VideoInfo(db.Model):
         return end - start
 
     def json(self):
-        return {
+        try:
+            from flask_login import current_user
+            is_authed = current_user.is_authenticated
+        except Exception:
+            is_authed = False
+        j = {
             "title": self.title,
             "description": self.description,
             "private": self.private,
@@ -104,6 +113,12 @@ class VideoInfo(db.Model):
             "edited": self.has_crop or False,
             "has_password": bool(self.password_hash),
         }
+        # Only expose the share token to authenticated users (owner/admin) so they
+        # can build share links. It is never returned to anonymous viewers, who
+        # receive the token via the share URL itself instead.
+        if is_authed and self.share_token:
+            j["share_token"] = self.share_token
+        return j
 
     def __repr__(self):
         return "<VideoInfo {} {}>".format(self.video_id, self.title)

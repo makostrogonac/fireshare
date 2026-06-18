@@ -15,8 +15,9 @@ const service = {
       },
     })
   },
-  getDetails(id) {
-    return Api().get(`/api/video/details/${id}`)
+  getDetails(id, shareToken) {
+    const query = shareToken ? `?s=${encodeURIComponent(shareToken)}` : ''
+    return Api().get(`/api/video/details/${id}${query}`)
   },
   getCropStatus(id) {
     return Api().get(`/api/video/${id}/crop-status`)

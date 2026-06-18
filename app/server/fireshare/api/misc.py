@@ -91,8 +91,21 @@ def video_metadata(video_id):
     if video:
         derived_dir = Path(current_app.config["PROCESSED_DIRECTORY"], "derived", video_id)
         poster_file = "custom_poster.webp" if (derived_dir / "custom_poster.webp").exists() else "poster.jpg"
-        password_protected = bool(video.info and video.info.password_hash)
+        # A valid ?s=<share_token> unlocks the video for the metadata route too, so
+        # Discord can scrape a shared password-protected video and embed it.
+        # Imported lazily to avoid a module load-order dependency (misc is imported
+        # before video in the api package).
+        from .video import _share_token_is_valid, _set_session_unlocked
+        share_token = request.args.get('s')
+        share_token_ok = _share_token_is_valid(video_id, share_token)
+        if share_token_ok:
+            _set_session_unlocked(video_id)
+        password_protected = bool(video.info and video.info.password_hash) and not share_token_ok
         embed_video_url = f"{domain}/api/video?id={video_id}&quality=720p"
+        # Include the token in the embed stream URL so Discord's scraper (which has
+        # no session) can fetch a password-protected shared video.
+        if share_token_ok and share_token:
+            embed_video_url = f"{embed_video_url}&s={share_token}"
 
         embed_width = video.info.width if video.info else None
         embed_height = video.info.height if video.info else None

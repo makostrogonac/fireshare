@@ -3,7 +3,6 @@ import { saveProgress, getResumeTime } from '../common/videoProgress'
 import { useLocation, useParams } from 'react-router-dom'
 import { Button, Chip, CircularProgress, Divider, IconButton, TextField, Tooltip, Typography, Box } from '@mui/material'
 import { Helmet } from 'react-helmet'
-import ShareIcon from '@mui/icons-material/Share'
 import ContentCutIcon from '@mui/icons-material/ContentCut'
 import AccessTimeIcon from '@mui/icons-material/AccessTime'
 import LockIcon from '@mui/icons-material/Lock'
@@ -16,9 +15,9 @@ import {
   getPublicWatchUrl,
   copyToClipboard,
   getVideoSources,
-  getDiscordEmbedMarkdownLink,
 } from '../common/utils'
 import VideoJSPlayer from '../components/player/VideoJSPlayer'
+import VideoShareMenu from '../components/ui/VideoShareMenu'
 
 const URL = getUrl()
 const PURL = getPublicWatchUrl()
@@ -55,6 +54,7 @@ const Watch = ({ authenticated }) => {
   const { id } = useParams()
   const query = useQuery()
   const time = query.get('t')
+  const shareTokenParam = query.get('s')
   const [details, setDetails] = React.useState(null)
   const [notFound, setNotFound] = React.useState(false)
   const [views, setViews] = React.useState()
@@ -73,7 +73,7 @@ const Watch = ({ authenticated }) => {
   React.useEffect(() => {
     async function fetch() {
       try {
-        const resp = (await VideoService.getDetails(id)).data
+        const resp = (await VideoService.getDetails(id, shareTokenParam)).data
         const videoViews = (await VideoService.getViews(id)).data
         setDetails(resp)
         setViews(videoViews)
@@ -166,7 +166,12 @@ const Watch = ({ authenticated }) => {
 
   const copyTimestamp = () => {
     const currentTime = getCurrentTime()
-    copyToClipboard(`${PURL}${details?.video_id}?t=${currentTime}`)
+    const token =
+      details?.info?.has_password
+        ? details?.info?.share_token || shareTokenParam || undefined
+        : undefined
+    const tokenParam = token ? `&s=${encodeURIComponent(token)}` : ''
+    copyToClipboard(`${PURL}${details?.video_id}?t=${currentTime}${tokenParam}`)
     setAlert({
       type: 'info',
       message: 'Time stamped link copied to clipboard',
@@ -222,14 +227,16 @@ const Watch = ({ authenticated }) => {
         <meta property="og:title" value={details?.info?.title} />
         {details?.info?.description && <meta property="og:description" value={details?.info?.description} />}
         <meta property="og:image" value={`${URL}/api/video/poster?id=${id}`} />
-        {!details?.info?.has_password && (
+        {(!details?.info?.has_password || (details?.info?.has_password && (details?.info?.share_token || shareTokenParam))) && (
           <>
             <meta
               property="og:video"
               value={
-                SERVED_BY === 'nginx'
-                  ? `${URL}/_content/video/${id}${details?.extension || '.mp4'}`
-                  : `${URL}/api/video?id=${id}`
+                details?.info?.has_password
+                  ? `${URL}/api/video?id=${id}&quality=720p&s=${encodeURIComponent(details?.info?.share_token || shareTokenParam)}`
+                  : SERVED_BY === 'nginx'
+                    ? `${URL}/_content/video/${id}${details?.extension || '.mp4'}`
+                    : `${URL}/api/video?id=${id}&quality=720p`
               }
             />
             <meta property="og:video:width" value={details?.info?.width} />
@@ -245,7 +252,12 @@ const Watch = ({ authenticated }) => {
             sx={{ '& > div': { borderRadius: 0 } }}
           >
             <VideoJSPlayer
-              sources={getVideoSources(id, details?.info, details?.extension || '.mp4')}
+              sources={getVideoSources(id, details?.info, details?.extension || '.mp4', {
+              shareToken:
+                details?.info?.has_password
+                  ? details?.info?.share_token || shareTokenParam || undefined
+                  : undefined,
+            })}
               poster={getPosterUrl()}
               autoplay={true}
               controls={true}
@@ -466,18 +478,18 @@ const Watch = ({ authenticated }) => {
               >
                 {`${PURL}${details?.video_id}`}
               </Typography>
-              <Tooltip title="Copy Discord embed">
-                <IconButton
-                  size="small"
-                  onClick={() => {
-                    copyToClipboard(getDiscordEmbedMarkdownLink(details?.video_id))
-                    setAlert({ type: 'info', message: 'Discord embed link copied to clipboard', open: true })
-                  }}
-                  sx={{ color: '#FFFFFF66', '&:hover': { color: 'white' }, p: 0.5, flexShrink: 0 }}
-                >
-                  <ShareIcon sx={{ fontSize: 16 }} />
-                </IconButton>
-              </Tooltip>
+              <VideoShareMenu
+                videoId={details?.video_id}
+                shareToken={
+                  details?.info?.has_password
+                    ? details?.info?.share_token || shareTokenParam || undefined
+                    : undefined
+                }
+                onCopied={(message) => setAlert({ type: 'info', message, open: true })}
+                buttonSx={{ color: '#FFFFFF66', '&:hover': { color: 'white' }, p: 0.5, flexShrink: 0 }}
+                iconSx={{ fontSize: 16 }}
+                tooltip="Share"
+              />
             </Box>
             <Tooltip title="Copy timestamp">
               <IconButton size="small" onClick={copyTimestamp} sx={actionBtnSx}>

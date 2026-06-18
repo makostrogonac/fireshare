@@ -273,13 +273,22 @@ def get_videos():
         videos = Video.query.join(VideoInfo).order_by(text(sort)).all()
 
     videos_json = []
+    minted_share_token = False
     for v in videos:
+        # Ensure password-protected videos have a share token so owners can share
+        # them from the card without first opening the modal. Bounded to
+        # password-protected videos and committed once.
+        if v.info and v.info.has_password and not v.info.share_token:
+            v.info.share_token = secrets.token_urlsafe(16)
+            minted_share_token = True
         vjson = v.json()
         vjson["view_count"] = VideoView.count(v.video_id)
         vjson["tags"] = [l.tag.json() for l in VideoTagLink.query.filter_by(video_id=v.video_id).all() if l.tag is not None]
         if vjson.get("info", {}).get("has_password"):
             vjson["info"]["session_unlocked"] = _is_session_unlocked(v.video_id)
         videos_json.append(vjson)
+    if minted_share_token:
+        db.session.commit()
 
     if sort == "views asc":
         videos_json = sorted(videos_json, key=lambda d: d['view_count'])
@@ -635,13 +644,24 @@ def handle_video_details(id):
         # db lookup and get the details title/views/etc
         video = Video.query.filter_by(video_id=id).first()
         if video:
+            # A valid ?s=<share_token> grants access: mark the session unlocked so
+            # the watch page renders the player and subsequent stream requests pass.
+            share_token_ok = _share_token_is_valid(id, request.args.get('s'))
+            if share_token_ok:
+                _set_session_unlocked(id)
+            # Authenticated users (owner/admin) get the share token so they can
+            # build share links; mint one lazily if it does not exist yet.
+            if current_user.is_authenticated and video.info:
+                _get_or_create_share_token(video.info)
             vjson = video.json()
             vjson["view_count"] = VideoView.count(video.video_id)
             derived_dir = Path(current_app.config["PROCESSED_DIRECTORY"], "derived", video.video_id)
             vjson["has_custom_poster"] = (derived_dir / "custom_poster.webp").exists()
             if video.info and video.info.password_hash:
                 vjson["info"]["session_unlocked"] = (
-                    current_user.is_authenticated or _is_session_unlocked(video.video_id)
+                    current_user.is_authenticated
+                    or _is_session_unlocked(video.video_id)
+                    or share_token_ok
                 )
             return jsonify(vjson)
         else:
@@ -697,6 +717,10 @@ def handle_video_details(id):
                 else:
                     plain = new_password
                 video_info.password_hash = generate_password_hash(plain, method='pbkdf2:sha256')
+                # A password-protected video needs a share token so it can still be
+                # shared (the token grants access without exposing the password).
+                if not video_info.share_token:
+                    video_info.share_token = secrets.token_urlsafe(16)
 
             # Update Video.recorded_at if provided
             if recorded_at is not None:
@@ -1010,12 +1034,27 @@ def nginx_video_auth():
         return '', 200
     if current_user.is_authenticated:
         return '', 200
+    # A valid ?s=<share_token> in the original URI grants access regardless of
+    # session state, so shared password-protected videos survive the 1-hour
+    # session-unlock TTL.
+    share_token = _parse_share_token_from_uri(original_uri)
+    if share_token and _share_token_is_valid(video_id, share_token):
+        return '', 200
     unlocked = session.get('unlocked_videos', {})
     if isinstance(unlocked, dict):
         ts = unlocked.get(video_id)
         if ts and (_time.time() - ts) < 3600:
             return '', 200
     return '', 403
+
+
+def _parse_share_token_from_uri(uri):
+    """Extract the s=<token> query parameter from a URI."""
+    from urllib.parse import parse_qs, urlparse
+    parsed = urlparse(uri)
+    params = parse_qs(parsed.query)
+    tokens = params.get('s', [])
+    return tokens[0] if tokens else None
 
 
 def _is_session_unlocked(video_id):
@@ -1026,12 +1065,46 @@ def _is_session_unlocked(video_id):
     return bool(ts and (_time.time() - ts) < 3600)
 
 
+def _set_session_unlocked(video_id):
+    """Mark a video as session-unlocked so subsequent stream/detail requests pass."""
+    session.permanent = True
+    unlocked = session.get('unlocked_videos', {})
+    if not isinstance(unlocked, dict):
+        unlocked = {}
+    unlocked[video_id] = _time.time()
+    session['unlocked_videos'] = unlocked
+
+
+def _get_or_create_share_token(video_info):
+    """Return the video's share token, generating a stable one on first use."""
+    if not video_info:
+        return None
+    if not video_info.share_token:
+        video_info.share_token = secrets.token_urlsafe(16)
+        db.session.commit()
+    return video_info.share_token
+
+
+def _share_token_is_valid(video_id, token):
+    """True when ``token`` matches the stored share token for ``video_id``."""
+    if not token or not isinstance(token, str):
+        return False
+    video_info = VideoInfo.query.filter_by(video_id=video_id).first()
+    if not video_info or not video_info.share_token:
+        return False
+    return video_info.share_token == token
+
+
 @api.route('/api/video')
 def get_video():
     video_id = request.args.get('id')
     subid = request.args.get('subid')
     quality = request.args.get('quality')  # Support quality parameter (720p, 1080p, cropped)
-    if not current_user.is_authenticated:
+    # A valid ?s=<share_token> grants access for this request (e.g. Discord's
+    # scraper fetching the og:video, or a direct-embed stream URL) even when the
+    # viewer is anonymous and the video is password-protected.
+    share_token_ok = _share_token_is_valid(video_id, request.args.get('s'))
+    if not current_user.is_authenticated and not share_token_ok:
         video_info = VideoInfo.query.filter_by(video_id=video_id).first()
         if video_info and video_info.password_hash:
             if not _is_session_unlocked(video_id):

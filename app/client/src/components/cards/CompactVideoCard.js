@@ -2,8 +2,10 @@ import React from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Box, Chip, Typography, IconButton, Menu, MenuItem, ListItemIcon, Skeleton, Tooltip } from '@mui/material'
 import TagChip from '../ui/TagChip'
+import VideoShareMenu from '../ui/VideoShareMenu'
 import LockIcon from '@mui/icons-material/Lock'
-import ShareIcon from '@mui/icons-material/Share'
+import LinkIcon from '@mui/icons-material/Link'
+import MovieIcon from '@mui/icons-material/Movie'
 import VisibilityIcon from '@mui/icons-material/Visibility'
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff'
 import MoreVertIcon from '@mui/icons-material/MoreVert'
@@ -14,10 +16,10 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import FolderIcon from '@mui/icons-material/Folder'
 import CheckIcon from '@mui/icons-material/Check'
 import CloseIcon from '@mui/icons-material/Close'
-import { CopyToClipboard } from 'react-copy-to-clipboard'
 import {
   copyToClipboard,
   getDiscordEmbedMarkdownLink,
+  getPublicWatchLink,
   getPublicWatchUrl,
   toHHMMSS,
   getVideoUrl,
@@ -48,6 +50,10 @@ const CompactVideoCard = ({
   removeOnMove = false,
   showTypeIndicator = false,
 }) => {
+  // Share token is only present for authenticated viewers (owner/admin). It is
+  // appended to share links only for password-protected videos so a shared link
+  // is watchable by anyone without exposing the password.
+  const shareToken = video.info?.has_password ? video.info?.share_token : undefined
   const [intVideo, setIntVideo] = React.useState(video)
   const [hover, setHover] = React.useState(false)
   const [thumbnailHover, setThumbnailHover] = React.useState(false)
@@ -665,7 +671,7 @@ const CompactVideoCard = ({
               </Box>
             )}
 
-            {/* Discord share button - shows on hover */}
+            {/* Share button - shows on hover */}
             <Box
               sx={{
                 position: 'absolute',
@@ -675,28 +681,18 @@ const CompactVideoCard = ({
                 transition: 'opacity 0.2s ease-in-out',
               }}
             >
-              <CopyToClipboard text={getDiscordEmbedMarkdownLink(video.video_id)}>
-                <IconButton
-                  sx={{
-                    bgcolor: '#000000BF',
-                    '&:hover': {
-                      background: '#2684FF88',
-                    },
-                  }}
-                  aria-label="copy Discord embed"
-                  size="small"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    alertHandler?.({
-                      type: 'info',
-                      message: 'Discord embed link copied to clipboard',
-                      open: true,
-                    })
-                  }}
-                >
-                  <ShareIcon sx={{ color: 'white', fontSize: 24 }} />
-                </IconButton>
-              </CopyToClipboard>
+              <VideoShareMenu
+                videoId={video.video_id}
+                shareToken={shareToken}
+                onCopied={(message) => alertHandler?.({ type: 'info', message, open: true })}
+                buttonSx={{
+                  bgcolor: '#000000BF',
+                  '&:hover': { background: '#2684FF88' },
+                }}
+                iconSx={{ color: 'white', fontSize: 24 }}
+                tooltip="Share"
+                ariaLabel="share"
+              />
             </Box>
 
             {/* Visibility toggle button - shows on hover when authenticated */}
@@ -1070,12 +1066,21 @@ const CompactVideoCard = ({
               onClick: handleTranscode,
             },
             {
-              label: 'Copy Discord Embed',
-              Icon: ShareIcon,
+              label: 'Copy Link',
+              Icon: LinkIcon,
               color: '#FFFFFFE6',
               onClick: () => {
-                copyToClipboard(getDiscordEmbedMarkdownLink(video.video_id))
-                alertHandler?.({ type: 'info', message: 'Discord embed link copied to clipboard', open: true })
+                copyToClipboard(getPublicWatchLink(video.video_id, shareToken))
+                alertHandler?.({ type: 'info', message: 'Link copied to clipboard', open: true })
+              },
+            },
+            {
+              label: 'Direct Embed',
+              Icon: MovieIcon,
+              color: '#FFFFFFE6',
+              onClick: () => {
+                copyToClipboard(getDiscordEmbedMarkdownLink(video.video_id, shareToken))
+                alertHandler?.({ type: 'info', message: 'Direct video embed copied to clipboard', open: true })
               },
             },
             {
