@@ -808,7 +808,8 @@ def get_video_audio():
         paths = current_app.config['PATHS']
         derived_dir = paths['processed'] / 'derived' / video_id
         suffix = f'-track{track_index}' if track_index is not None else ''
-        audio_path = derived_dir / f'{video_id}-audio{suffix}.mp3'
+        ext = '.m4a' if track_index is not None else '.mp3'
+        audio_path = derived_dir / f'{video_id}-audio{suffix}{ext}'
 
         if not audio_path.exists():
             logger.info(f'Audio extract not cached, creating: {audio_path} (track={track_index})')
@@ -818,7 +819,8 @@ def get_video_audio():
                 logger.error(f'Failed to create audio extract for {video_id} track={track_index}')
                 return Response(status=500)
 
-        return send_file(audio_path, mimetype='audio/mpeg', conditional=True)
+        mimetype = 'audio/mp4' if track_index is not None else 'audio/mpeg'
+        return send_file(audio_path, mimetype=mimetype, conditional=True)
     except Exception as e:
         logger.error(f"Error serving audio extract for {video_id}: {e}")
         return Response(status=404)

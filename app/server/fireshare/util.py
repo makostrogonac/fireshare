@@ -408,14 +408,13 @@ def create_audio_extract(source_path, out_path, track_index=None):
     """
     Extract audio from source_path for waveform display or per-track editing.
     - Without track_index: tiny mono MP3 for waveform display (low quality, fast load).
-    - With track_index: extract that audio stream at original quality (AAC, 192k,
-      original channels and sample rate) so the editor gets full-fidelity audio.
+    - With track_index: stream-copies the original audio track into an M4A container
+      (zero quality loss — same codec, bitrate, channels, and sample rate as source).
     Returns True on success, False on failure.
     """
     cmd = ['ffmpeg', '-v', 'quiet', '-y', '-i', str(source_path)]
     if track_index is not None:
-        cmd += ['-map', f'0:a:{track_index}']
-        cmd += ['-vn', '-acodec', 'aac', '-b:a', '192k', str(out_path)]
+        cmd += ['-map', f'0:a:{track_index}', '-c:a', 'copy', str(out_path)]
     else:
         cmd += [
             '-vn',           # drop video
@@ -461,6 +460,21 @@ def create_video_crop_with_audio(
         cmd += ['-map', '0:v:0', '-c:v', 'copy', '-an', '-movflags', '+faststart', str(out_path)]
     else:
         num_tracks = len(audio_tracks)
+        # Probe the first selected audio track for its bitrate to match quality
+        try:
+            probe_cmd = [
+                'ffprobe', '-v', 'quiet', '-select_streams',
+                f'a:{audio_tracks[0]["track_index"]}',
+                '-show_entries', 'stream=bit_rate', '-of', 'default=noprint_wrappers=1',
+                str(source_path),
+            ]
+            probe_out = sp.check_output(probe_cmd, text=True, stderr=sp.DEVNULL)
+            match = re.search(r'bit_rate=(\d+)', probe_out)
+            original_bitrate = int(match.group(1)) if match else 192000
+        except Exception:
+            original_bitrate = 192000
+        audio_bitrate = max(128000, min(640000, original_bitrate))  # clamp 128k–640k
+
         filter_parts = []
         label_names = []
 
@@ -485,7 +499,7 @@ def create_video_crop_with_audio(
             '-map', audio_map,
             '-c:v', 'copy',
             '-c:a', 'aac',
-            '-b:a', '192k',
+            '-b:a', str(audio_bitrate),
             '-movflags', '+faststart',
             str(out_path),
         ]
