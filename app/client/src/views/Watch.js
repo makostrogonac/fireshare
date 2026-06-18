@@ -253,11 +253,11 @@ const Watch = ({ authenticated }) => {
           >
             <VideoJSPlayer
               sources={getVideoSources(id, details?.info, details?.extension || '.mp4', {
-              shareToken:
-                details?.info?.has_password
-                  ? details?.info?.share_token || shareTokenParam || undefined
-                  : undefined,
-            })}
+                shareToken:
+                  details?.info?.has_password
+                    ? details?.info?.share_token || shareTokenParam || undefined
+                    : undefined,
+              })}
               poster={getPosterUrl()}
               autoplay={true}
               controls={true}

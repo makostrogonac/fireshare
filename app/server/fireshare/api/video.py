@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import secrets
+import hmac
 import shutil
 import time as _time
 import subprocess
@@ -650,8 +651,9 @@ def handle_video_details(id):
             if share_token_ok:
                 _set_session_unlocked(id)
             # Authenticated users (owner/admin) get the share token so they can
-            # build share links; mint one lazily if it does not exist yet.
-            if current_user.is_authenticated and video.info:
+            # build share links; mint one lazily for password-protected videos
+            # (non-password videos are already public, so no token is needed).
+            if current_user.is_authenticated and video.info and video.info.password_hash:
                 _get_or_create_share_token(video.info)
             vjson = video.json()
             vjson["view_count"] = VideoView.count(video.video_id)
@@ -1086,13 +1088,16 @@ def _get_or_create_share_token(video_info):
 
 
 def _share_token_is_valid(video_id, token):
-    """True when ``token`` matches the stored share token for ``video_id``."""
+    """True when ``token`` matches the stored share token for ``video_id``.
+
+    Uses a constant-time comparison to avoid leaking token bytes via timing.
+    """
     if not token or not isinstance(token, str):
         return False
     video_info = VideoInfo.query.filter_by(video_id=video_id).first()
     if not video_info or not video_info.share_token:
         return False
-    return video_info.share_token == token
+    return hmac.compare_digest(video_info.share_token, token)
 
 
 @api.route('/api/video')
@@ -1110,6 +1115,29 @@ def get_video():
             if not _is_session_unlocked(video_id):
                 return Response(status=403, response="Password required")
     video_path = get_video_path(video_id, subid, quality)
+    return _stream_video_file(video_path)
+
+
+@api.route('/api/video/embed/<video_id>.mp4')
+def get_video_embed(video_id):
+    """Direct video stream URL whose path ends in .mp4.
+
+    Used by the "Direct embed" share option so Discord (and other scrapers that
+    sniff the URL extension) embed the video as a bare inline player, like a
+    direct .mp4 link. Always serves the 720p derived file when available,
+    falling back to the cropped master or original via get_video_path. An optional
+    ?s=<share_token> grants access to password-protected shared videos.
+    """
+    share_token_ok = _share_token_is_valid(video_id, request.args.get('s'))
+    if not current_user.is_authenticated and not share_token_ok:
+        video_info = VideoInfo.query.filter_by(video_id=video_id).first()
+        if video_info and video_info.password_hash:
+            if not _is_session_unlocked(video_id):
+                return Response(status=403, response="Password required")
+    try:
+        video_path = get_video_path(video_id, None, '720p')
+    except Exception:
+        return Response(status=404, response="Video not found")
     return _stream_video_file(video_path)
 
 

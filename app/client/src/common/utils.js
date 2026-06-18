@@ -42,15 +42,15 @@ export const getPublicBaseUrl = () => {
     : `${window.location.protocol}//${window.location.hostname}${portWithColon}`
 }
 
-// Direct stream URL for a video at 720p. Always uses the /api/video endpoint
-// (proxied to Flask in production) so the server can fall back to the cropped
-// master or original when a 720p transcode is not yet available, and so the
-// response is a stable video/mp4 that Discord embeds as a bare inline player
-// (no OpenGraph card) when used in a direct/mp4-style embed. When a share token
-// is supplied it is appended so password-protected shared videos are accessible.
+// Direct stream URL for a video at 720p whose path ends in .mp4. Uses the
+// dedicated /api/video/embed/<id>.mp4 route so Discord (which sniffs the URL
+// extension) embeds it as a bare inline player like a direct .mp4 link, with
+// no OpenGraph card. The server falls back to the cropped master or original
+// when a 720p transcode is not yet available. When a share token is supplied
+// it is appended so password-protected shared videos are accessible.
 export const getDirectEmbedStreamUrl = (videoId, token) => {
-  const base = `${getPublicBaseUrl()}/api/video?id=${videoId}&quality=720p`
-  return token ? `${base}&s=${token}` : base
+  const base = `${getPublicBaseUrl()}/api/video/embed/${videoId}.mp4`
+  return token ? `${base}?s=${encodeURIComponent(token)}` : base
 }
 
 // U+3164 HANGUL FILLER renders as blank text but still satisfies Discord's
