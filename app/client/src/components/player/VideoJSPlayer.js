@@ -36,8 +36,8 @@ function AudioTrackSync({ videoId, audioTracks, trackVolumes }) {
   useEffect(() => {
     if (!audioTracks || audioTracks.length === 0 || !videoId) return
     const urls = audioTracks
-      .filter((t) => t.index != null)
-      .map((t) => `${getUrl()}/api/video/audio?id=${videoId}&track=${t.index}`)
+      .filter((t) => t.track_num != null)
+      .map((t) => `${getUrl()}/api/video/audio?id=${videoId}&track=${t.track_num}`)
     setTrackUrls(urls)
   }, [videoId, audioTracks])
 

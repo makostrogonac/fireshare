@@ -61,7 +61,7 @@ const WaveformCropper = React.forwardRef(
     const cursorTimeRef = useRef(0)
 
     // Multi-track state
-    const tracks = audioTracks && audioTracks.length > 0 ? audioTracks : [{ track_num: 0, title: 'Default', index: null }]
+    const tracks = audioTracks && audioTracks.length > 0 ? audioTracks : [{ track_num: 0, title: 'Default' }]
     const [activeTrack, setActiveTrack] = useState(0)
     const [trackVolumes, setTrackVolumes] = useState(() => tracks.map(() => 100))
     const [mergedTracks, setMergedTracks] = useState(null) // null | [trackA_index, trackB_index]
@@ -115,15 +115,15 @@ const WaveformCropper = React.forwardRef(
     // Build the audio URL based on active track or merged state
     const buildAudioUrl = useCallback(() => {
       if (mergedTracks) {
-        // When merged, use the first track's audio as base (merge is done visually)
+        // When merged, use the second track's audio as base (merge is done visually)
         const t = tracks[mergedTracks[1]] || tracks[0]
-        if (t.index != null) {
-          return `${getUrl()}/api/video/audio?id=${videoId}&track=${t.index}`
+        if (t.track_num != null) {
+          return `${getUrl()}/api/video/audio?id=${videoId}&track=${t.track_num}`
         }
       }
       const t = tracks[activeTrack]
-      if (t && t.index != null) {
-        return `${getUrl()}/api/video/audio?id=${videoId}&track=${t.index}`
+      if (t && t.track_num != null) {
+        return `${getUrl()}/api/video/audio?id=${videoId}&track=${t.track_num}`
       }
       return `${getUrl()}/api/video/audio?id=${videoId}`
     }, [videoId, activeTrack, mergedTracks, tracks])
