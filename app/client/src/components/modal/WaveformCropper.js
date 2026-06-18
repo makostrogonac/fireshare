@@ -31,7 +31,7 @@ const TIMELINE_HEIGHT = 20 // px
  *   - Individual volume control (0-200%) per track
  *
  * Props:
- *   videoId       — video ID used to build /api/video/audio?id={videoId}&track={n}
+ *   videoId       — video ID used to build /api/video/audio?id={videoId}&track={n}&quality=waveform
  *   duration      — original video duration in seconds (used as fallback)
  *   startTime     — current crop start (null = full start)
  *   endTime       — current crop end   (null = full end)
@@ -125,9 +125,9 @@ const WaveformCropper = React.forwardRef(
     const buildAudioUrl = useCallback(() => {
       const t = tracks[activeTrack]
       if (t && t.track_num != null) {
-        return `${getUrl()}/api/video/audio?id=${videoId}&track=${t.track_num}`
+        return `${getUrl()}/api/video/audio?id=${videoId}&track=${t.track_num}&quality=waveform`
       }
-      return `${getUrl()}/api/video/audio?id=${videoId}`
+      return `${getUrl()}/api/video/audio?id=${videoId}&quality=waveform`
     }, [videoId, activeTrack, tracks])
 
     // Main Wavesurfer setup

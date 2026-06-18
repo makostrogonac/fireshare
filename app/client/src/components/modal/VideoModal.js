@@ -184,80 +184,146 @@ const DateField = ({ selectedDate, selectedTime, onDateChange, onTimeChange }) =
 // ─── Component ────────────────────────────────────────────────────────────────
 
 /**
- * AudioPreviewSync — plays secondary audio tracks alongside the main video
- * during editing so the user can hear multiple tracks and judge their volumes.
- * Uses hidden <audio> elements synced to the video player's playback position.
+ * AudioPreviewSync — plays selected original-quality audio tracks alongside the
+ * video during editing so the user can judge the final mix before saving.
+ * The main video element is muted while this preview is mounted to avoid doubling
+ * the browser-selected default audio track.
  */
 function AudioPreviewSync({ videoId, audioTracks, trackSettings, playerRef }) {
   const audioRefs = React.useRef([])
+  const audioContextRef = React.useRef(null)
+  const sourceNodesRef = React.useRef([])
+  const gainNodesRef = React.useRef([])
   const syncIntervalRef = React.useRef(null)
+  const originalVideoMutedRef = React.useRef(null)
+  const trackSettingsRef = React.useRef(trackSettings)
 
-  // Build audio URLs for each track
-  const trackUrls = React.useMemo(() => {
+  const previewTracks = React.useMemo(() => {
     if (!audioTracks || audioTracks.length === 0 || !videoId) return []
     return audioTracks
       .filter((t) => t.track_num != null)
-      .map((t) => `${getUrl()}/api/video/audio?id=${videoId}&track=${t.track_num}`)
+      .map((t) => ({
+        ...t,
+        url: `${getUrl()}/api/video/audio?id=${videoId}&track=${t.track_num}&quality=original`,
+        fallbackUrl: `${getUrl()}/api/video/audio?id=${videoId}&track=${t.track_num}&quality=waveform`,
+      }))
   }, [videoId, audioTracks])
 
-  // Sync playback state and position with the video player
   React.useEffect(() => {
-    if (trackUrls.length === 0) return
+    const media = playerRef?.current?.el?.()
+    if (!media) return undefined
+    originalVideoMutedRef.current = media.muted
+    media.muted = true
+    return () => {
+      media.muted = originalVideoMutedRef.current ?? false
+    }
+  }, [playerRef])
+
+  React.useEffect(() => {
+    trackSettingsRef.current = trackSettings
+  }, [trackSettings])
+
+  React.useEffect(() => {
+    if (previewTracks.length === 0) return undefined
+
+    const ensureAudioGraph = () => {
+      if (!audioContextRef.current) {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext
+        if (AudioCtx) audioContextRef.current = new AudioCtx()
+      }
+      const ctx = audioContextRef.current
+      if (!ctx) return
+
+      audioRefs.current.forEach((audio, i) => {
+        if (!audio || sourceNodesRef.current[i]) return
+        const source = ctx.createMediaElementSource(audio)
+        const gain = ctx.createGain()
+        source.connect(gain)
+        gain.connect(ctx.destination)
+        sourceNodesRef.current[i] = source
+        gainNodesRef.current[i] = gain
+      })
+    }
 
     const syncWithPlayer = () => {
       const player = playerRef?.current
       if (!player) return
+      const media = player.el?.()
+      if (media) {
+        if (originalVideoMutedRef.current === null) originalVideoMutedRef.current = media.muted
+        media.muted = true
+      }
+      ensureAudioGraph()
+      const ctx = audioContextRef.current
+      if (ctx?.state === 'suspended') ctx.resume().catch(() => {})
+
       const isPaused = player.paused?.() ?? true
       const currentTime = player.currentTime?.() ?? 0
 
       audioRefs.current.forEach((audio, i) => {
         if (!audio) return
-        // Apply volume from track settings
-        const ts = trackSettings?.find((s) => s.track_num === audioTracks[i]?.track_num)
-        if (ts) {
-          audio.volume = ts.enabled ? Math.max(0, Math.min(1, (ts.volume ?? 100) / 100)) : 0
-          audio.muted = !ts.enabled
-        }
-        // Sync position
+        const trackNum = previewTracks[i]?.track_num
+        const ts = trackSettingsRef.current?.find((s) => s.track_num === trackNum)
+        const gain = ts?.enabled ? Math.max(0, Math.min(2, (ts.volume ?? 100) / 100)) : 0
+        if (gainNodesRef.current[i]) gainNodesRef.current[i].gain.value = gain
+        // When Web Audio is available, gain node controls volume up to 200%.
+        // Without it, fall back to normal element volume capped at 100%.
+        audio.volume = audioContextRef.current ? 1 : Math.min(1, gain)
+        audio.muted = false
+
         const drift = Math.abs(audio.currentTime - currentTime)
-        if (drift > 0.3 || (!isPaused && audio.paused)) {
+        if (drift > 0.25 || (!isPaused && audio.paused)) {
           audio.currentTime = currentTime
         }
-        if (!isPaused && audio.paused) {
+        if (!isPaused && audio.paused && gain > 0) {
           audio.play().catch(() => {})
-        } else if (isPaused && !audio.paused) {
+        } else if ((isPaused || gain === 0) && !audio.paused) {
           audio.pause()
         }
       })
     }
 
-    // Initial sync
     syncWithPlayer()
-
-    // Periodic sync for smooth playback
     syncIntervalRef.current = setInterval(syncWithPlayer, 150)
 
     return () => {
       if (syncIntervalRef.current) clearInterval(syncIntervalRef.current)
-      // Pause all audio elements on cleanup
       audioRefs.current.forEach((a) => {
         if (a) a.pause()
       })
+      const media = playerRef?.current?.el?.()
+      if (media && originalVideoMutedRef.current !== null) {
+        media.muted = originalVideoMutedRef.current
+      }
+      gainNodesRef.current.forEach((g) => g?.disconnect())
+      sourceNodesRef.current.forEach((s) => s?.disconnect())
+      gainNodesRef.current = []
+      sourceNodesRef.current = []
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => {})
+        audioContextRef.current = null
+      }
     }
-  }, [trackUrls, trackSettings, playerRef, audioTracks])
+  }, [previewTracks, playerRef])
 
-  if (trackUrls.length === 0) return null
+  if (previewTracks.length === 0) return null
 
   return (
     <div style={{ display: 'none' }} aria-hidden="true">
-      {trackUrls.map((url, i) => (
+      {previewTracks.map((track, i) => (
         <audio
-          key={i}
+          key={track.track_num}
           ref={(el) => {
             audioRefs.current[i] = el
           }}
-          src={url}
+          src={track.url}
           preload="auto"
+          onError={(e) => {
+            if (e.currentTarget.src !== track.fallbackUrl) {
+              e.currentTarget.src = track.fallbackUrl
+              e.currentTarget.load()
+            }
+          }}
         />
       ))}
     </div>
@@ -601,12 +667,20 @@ const VideoModal = ({
     setTrackSettings((prev) =>
       prev.map((s) => (s.track_num === trackNum ? { ...s, ...setting } : s)),
     )
+    setUpdatable(true)
   }, [])
 
   const update = async () => {
     if (!authenticated) return
     const cropChanged = cropStart !== (vid?.info?.start_time ?? null) || cropEnd !== (vid?.info?.end_time ?? null)
-    if (!updateable && !cropChanged && !pendingThumbnailFile) {
+    const enabledTracks = trackSettings.filter((s) => s.enabled)
+    const allAudioDefault = trackSettings.length > 0 && trackSettings.every((s) => s.enabled && s.volume === 100)
+    const audioTracksCustomized = trackSettings.length > 0 && !allAudioDefault
+    const audioTracksPayload = audioTracksCustomized
+      ? enabledTracks.map((s) => ({ track_index: s.track_num, volume_pct: s.volume }))
+      : null
+
+    if (!updateable && !cropChanged && !pendingThumbnailFile && audioTracksPayload === null) {
       setEditMode(false)
       return
     }
@@ -618,15 +692,18 @@ const VideoModal = ({
     setAlert({ type: 'success', message: 'Details Updated', open: true })
 
     const cropApplied = cropChanged && (cropStart !== null || cropEnd !== null)
-    const cropCleared = cropChanged && cropStart === null && cropEnd === null
+    const renderApplied = cropApplied || audioTracksPayload !== null
+    const cropCleared = cropChanged && cropStart === null && cropEnd === null && audioTracksPayload === null
 
     if (cropChanged) {
       setVideo((prev) => ({
         ...prev,
         info: { ...prev.info, start_time: cropStart, end_time: cropEnd, has_crop: false },
       }))
+    } else if (renderApplied) {
+      setVideo((prev) => ({ ...prev, info: { ...prev.info, has_crop: false } }))
     }
-    if (cropApplied) {
+    if (renderApplied) {
       setCropProcessing(true)
     }
     if (cropCleared) {
@@ -649,31 +726,21 @@ const VideoModal = ({
       }
     }
 
-    if (!updateable && !cropChanged) return
+    if (!updateable && !cropChanged && audioTracksPayload === null) return
 
     try {
       const payload = { title, description, recorded_at: getRecordedAtISO() }
       if (cropChanged) {
         payload.start_time = cropStart
         payload.end_time = cropEnd
-        // Include audio track configuration when the user has customized audio
-        // (disabled some tracks, or changed volumes from default 100%)
-        const enabledTracks = trackSettings.filter((s) => s.enabled)
-        const allDefault = trackSettings.every((s) => s.enabled && s.volume === 100)
-        const allDisabled = enabledTracks.length === 0 && trackSettings.length > 0
-        if ((enabledTracks.length > 0 && enabledTracks.length < trackSettings.length) ||
-            trackSettings.some((s) => s.enabled && s.volume !== 100) ||
-            allDisabled) {
-          payload.audio_tracks = enabledTracks.map((s) => ({
-            track_index: s.track_num,
-            volume_pct: s.volume,
-          }))
-        }
+      }
+      if (audioTracksPayload !== null) {
+        payload.audio_tracks = audioTracksPayload
       }
       await VideoService.updateDetails(vid.video_id, payload)
       // Always bump player version so audio changes take effect even without crop
       setPlayerVersion((v) => v + 1)
-      if (cropApplied) {
+      if (renderApplied) {
         const videoId = vid.video_id
         clearInterval(cropPollRef.current)
         cropPollRef.current = setInterval(async () => {
@@ -693,7 +760,7 @@ const VideoModal = ({
       }
     } catch {
       setAlert({ type: 'error', message: 'An error occurred trying to save changes', open: true })
-      if (cropApplied) setCropProcessing(false)
+      if (renderApplied) setCropProcessing(false)
     }
   }
 

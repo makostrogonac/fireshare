@@ -172,7 +172,7 @@ const service = {
     return Api().get('/api/video/audio-tracks', { params: { id: videoId } })
   },
   getAudioTrackExtract(videoId, trackNum) {
-    return Api().get('/api/video/audio', { params: { id: videoId, track: trackNum } })
+    return Api().get('/api/video/audio', { params: { id: videoId, track: trackNum, quality: 'original' } })
   },
 }
 

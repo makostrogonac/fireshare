@@ -404,26 +404,66 @@ def create_video_crop(source_path, out_path, start_time=None, end_time=None):
     return result == 0
 
 
-def create_audio_extract(source_path, out_path, track_index=None):
+def get_audio_stream_by_track_index(source_path, track_index):
+    """Return ffprobe metadata for the Nth audio stream (audio-only index)."""
+    try:
+        idx = int(track_index)
+    except (TypeError, ValueError):
+        return None
+    if idx < 0:
+        return None
+    streams = get_media_info(source_path) or []
+    audio_streams = [s for s in streams if s.get('codec_type') == 'audio']
+    if idx >= len(audio_streams):
+        return None
+    return audio_streams[idx]
+
+
+def get_audio_copy_container(codec_name):
+    """Return (extension, mimetype) for stream-copying an audio codec."""
+    codec = (codec_name or '').lower()
+    if codec in ('aac', 'alac'):
+        return '.m4a', 'audio/mp4'
+    if codec == 'mp3':
+        return '.mp3', 'audio/mpeg'
+    if codec in ('opus', 'vorbis'):
+        return '.webm', 'audio/webm'
+    if codec == 'flac':
+        return '.flac', 'audio/flac'
+    if codec.startswith('pcm') or codec in ('wav', 'wave'):
+        return '.wav', 'audio/wav'
+    # Matroska can carry almost anything. Browser support depends on codec,
+    # but this preserves the source stream exactly when requested.
+    return '.mka', 'audio/x-matroska'
+
+
+def create_audio_extract(source_path, out_path, track_index=None, original_quality=False):
     """
-    Extract audio from source_path for waveform display or per-track editing.
-    - Without track_index: tiny mono MP3 for waveform display (low quality, fast load).
-    - With track_index: stream-copies the original audio track into an M4A container
-      (zero quality loss — same codec, bitrate, channels, and sample rate as source).
+    Extract audio from source_path.
+    - original_quality=False: tiny mono MP3 for WaveSurfer waveform display.
+      When track_index is provided, that specific audio stream is used.
+    - original_quality=True: stream-copy the original audio track (zero quality loss —
+      same codec, bitrate, channels, and sample rate as source).
     Returns True on success, False on failure.
     """
     cmd = ['ffmpeg', '-v', 'quiet', '-y', '-i', str(source_path)]
     if track_index is not None:
-        cmd += ['-map', f'0:a:{track_index}', '-c:a', 'copy', str(out_path)]
+        cmd += ['-map', f'0:a:{track_index}']
+
+    if original_quality and track_index is not None:
+        cmd += ['-vn', '-c:a', 'copy', str(out_path)]
     else:
         cmd += [
             '-vn',           # drop video
+            '-acodec', 'libmp3lame',
             '-ac', '1',      # mono
             '-ar', '22050',  # 22 kHz sample rate (plenty for a waveform visual)
             '-b:a', '32k',   # 32 kbps — keeps file tiny
             str(out_path),
         ]
-    logger.info(f'Creating audio extract (track={track_index}): {str(out_path)}')
+    logger.info(
+        f'Creating audio extract (track={track_index}, original_quality={original_quality}): {str(out_path)}'
+    )
     logger.debug(f"$ {' '.join(cmd)}")
     result = sp.call(cmd)
     if result == 0:
@@ -460,20 +500,48 @@ def create_video_crop_with_audio(
         cmd += ['-map', '0:v:0', '-c:v', 'copy', '-an', '-movflags', '+faststart', str(out_path)]
     else:
         num_tracks = len(audio_tracks)
-        # Probe the first selected audio track for its bitrate to match quality
         try:
-            probe_cmd = [
-                'ffprobe', '-v', 'quiet', '-select_streams',
-                f'a:{audio_tracks[0]["track_index"]}',
-                '-show_entries', 'stream=bit_rate', '-of', 'default=noprint_wrappers=1',
-                str(source_path),
+            unchanged_single_track_volume = float(audio_tracks[0].get('volume_pct', 100)) == 100
+        except (TypeError, ValueError):
+            unchanged_single_track_volume = False
+        if num_tracks == 1 and unchanged_single_track_volume:
+            # One selected track at unchanged volume can be stream-copied exactly.
+            cmd += [
+                '-map', '0:v:0',
+                '-map', f'0:a:{audio_tracks[0]["track_index"]}',
+                '-c:v', 'copy',
+                '-c:a', 'copy',
+                '-movflags', '+faststart',
+                str(out_path),
             ]
-            probe_out = sp.check_output(probe_cmd, text=True, stderr=sp.DEVNULL)
-            match = re.search(r'bit_rate=(\d+)', probe_out)
-            original_bitrate = int(match.group(1)) if match else 192000
-        except Exception:
+            logger.debug(f"$ {' '.join(cmd)}")
+            result = sp.call(cmd)
+            if result == 0:
+                logger.info(
+                    f'Created crop with copied audio {str(out_path)} '
+                    f'(start={start_time}, end={end_time}, track={audio_tracks[0]["track_index"]})'
+                )
+            else:
+                logger.error(f'Failed to create crop with copied audio {str(out_path)} (exit code {result})')
+            return result == 0
+
+        # Mixing/volume changes require re-encoding, but match the first selected
+        # source track's quality characteristics as closely as ffmpeg/MP4 output allows.
+        source_stream = get_audio_stream_by_track_index(source_path, audio_tracks[0].get('track_index')) or {}
+        try:
+            original_bitrate = int(source_stream.get('bit_rate') or 192000)
+        except (TypeError, ValueError):
             original_bitrate = 192000
         audio_bitrate = max(128000, min(640000, original_bitrate))  # clamp 128k–640k
+        try:
+            audio_sample_rate = int(source_stream.get('sample_rate') or 48000)
+        except (TypeError, ValueError):
+            audio_sample_rate = 48000
+        try:
+            audio_channels = int(source_stream.get('channels') or 2)
+        except (TypeError, ValueError):
+            audio_channels = 2
+        audio_channels = max(1, min(8, audio_channels))
 
         filter_parts = []
         label_names = []
@@ -500,6 +568,8 @@ def create_video_crop_with_audio(
             '-c:v', 'copy',
             '-c:a', 'aac',
             '-b:a', str(audio_bitrate),
+            '-ar', str(audio_sample_rate),
+            '-ac', str(audio_channels),
             '-movflags', '+faststart',
             str(out_path),
         ]

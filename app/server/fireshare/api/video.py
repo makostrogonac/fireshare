@@ -614,28 +614,32 @@ def handle_video_details(id):
 
             db.session.commit()
 
-            # Handle crop pipeline if start_time / end_time were included in the payload
+            # Handle render pipeline if crop times changed OR audio mixing was requested.
+            # audio_tracks=None means no audio customization was sent.
+            # audio_tracks=[] means the user explicitly disabled all audio tracks.
             crop_changed = new_start is not _UNSET or new_end is not _UNSET
-            if crop_changed:
+            audio_render_requested = audio_tracks is not None
+            if crop_changed or audio_render_requested:
                 resolved_start = new_start if new_start is not _UNSET else video_info.start_time
                 resolved_end   = new_end   if new_end   is not _UNSET else video_info.end_time
 
-                # Persist the new crop time values
-                video_info.start_time = resolved_start
-                video_info.end_time   = resolved_end
-                db.session.commit()
+                # Persist crop time values only when the user changed them.
+                if crop_changed:
+                    video_info.start_time = resolved_start
+                    video_info.end_time   = resolved_end
+                    db.session.commit()
 
                 paths = current_app.config['PATHS']
                 video = Video.query.filter_by(video_id=id).first()
 
-                if resolved_start is None and resolved_end is None:
-                    # Clearing the crop — delete crop files and re-transcode from original
+                if resolved_start is None and resolved_end is None and not audio_render_requested:
+                    # Clearing the crop — delete crop files and re-transcode from original.
                     had_480p  = video_info.has_480p
                     had_720p  = video_info.has_720p
                     had_1080p = video_info.has_1080p
                     _clear_crop(video, video_info, paths, had_480p, had_720p, had_1080p)
                 else:
-                    # Creating / replacing the crop
+                    # Creating/replacing crop, or rendering full-length video with custom audio.
                     _apply_crop_async(video, video_info, resolved_start, resolved_end, paths, audio_tracks=audio_tracks)
 
             if generated_password is not None:
@@ -791,13 +795,16 @@ def get_video_audio_tracks():
 @api.route('/api/video/audio')
 def get_video_audio():
     """
-    Serves a tiny mono MP3 extract of the original video, used by the waveform editor.
-    The extract is created on first request and cached at derived/{id}/{id}-audio.mp3.
-    Accepts optional `track` query param to extract a specific audio stream index.
-    Much smaller than the full video, so WaveSurfer loads and decodes it much faster.
+    Serves audio extracts used by the editor.
+    - quality=waveform (default): small mono MP3, reliable for WaveSurfer.
+    - quality=original with track=N: stream-copy of the original audio track,
+      preserving codec/bitrate/channels/sample rate for edit preview.
+    Accepts optional `track` query param as an audio-only stream index.
     """
     video_id = request.args.get('id')
     track_index = request.args.get('track', None)
+    quality = request.args.get('quality', 'waveform')
+    original_quality = track_index is not None and quality == 'original'
     if not video_id:
         return Response(status=400)
     if not current_user.is_authenticated:
@@ -807,19 +814,35 @@ def get_video_audio():
     try:
         paths = current_app.config['PATHS']
         derived_dir = paths['processed'] / 'derived' / video_id
+        video_path = get_video_path(video_id, subid=None, quality=None)
+
         suffix = f'-track{track_index}' if track_index is not None else ''
-        ext = '.m4a' if track_index is not None else '.mp3'
-        audio_path = derived_dir / f'{video_id}-audio{suffix}{ext}'
+        if original_quality:
+            stream = util.get_audio_stream_by_track_index(video_path, track_index)
+            if not stream:
+                return Response(status=404)
+            ext, mimetype = util.get_audio_copy_container(stream.get('codec_name'))
+            cache_tag = 'original'
+        else:
+            # WaveSurfer gets a small MP3 regardless of source codec, so waveform
+            # loading is reliable even for DTS/AC3/Opus/etc. tracks.
+            ext, mimetype = '.mp3', 'audio/mpeg'
+            cache_tag = 'waveform'
+
+        audio_path = derived_dir / f'{video_id}-audio{suffix}-{cache_tag}{ext}'
 
         if not audio_path.exists():
-            logger.info(f'Audio extract not cached, creating: {audio_path} (track={track_index})')
-            video_path = get_video_path(video_id, subid=None, quality=None)
+            logger.info(
+                f'Audio extract not cached, creating: {audio_path} '
+                f'(track={track_index}, original_quality={original_quality})'
+            )
             derived_dir.mkdir(parents=True, exist_ok=True)
-            if not util.create_audio_extract(video_path, audio_path, track_index=track_index):
+            if not util.create_audio_extract(
+                video_path, audio_path, track_index=track_index, original_quality=original_quality
+            ):
                 logger.error(f'Failed to create audio extract for {video_id} track={track_index}')
                 return Response(status=500)
 
-        mimetype = 'audio/mp4' if track_index is not None else 'audio/mpeg'
         return send_file(audio_path, mimetype=mimetype, conditional=True)
     except Exception as e:
         logger.error(f"Error serving audio extract for {video_id}: {e}")
