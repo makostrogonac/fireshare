@@ -811,9 +811,11 @@ def get_video_audio():
         audio_path = derived_dir / f'{video_id}-audio{suffix}.mp3'
 
         if not audio_path.exists():
+            logger.info(f'Audio extract not cached, creating: {audio_path} (track={track_index})')
             video_path = get_video_path(video_id, subid=None, quality=None)
             derived_dir.mkdir(parents=True, exist_ok=True)
             if not util.create_audio_extract(video_path, audio_path, track_index=track_index):
+                logger.error(f'Failed to create audio extract for {video_id} track={track_index}')
                 return Response(status=500)
 
         return send_file(audio_path, mimetype='audio/mpeg', conditional=True)

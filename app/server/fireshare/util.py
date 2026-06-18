@@ -424,6 +424,7 @@ def create_audio_extract(source_path, out_path, track_index=None):
             '-b:a', '32k',   # 32 kbps — keeps file tiny
             str(out_path),
         ]
+    logger.info(f'Creating audio extract (track={track_index}): {str(out_path)}')
     logger.debug(f"$ {' '.join(cmd)}")
     result = sp.call(cmd)
     if result == 0:

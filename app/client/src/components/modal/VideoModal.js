@@ -183,6 +183,87 @@ const DateField = ({ selectedDate, selectedTime, onDateChange, onTimeChange }) =
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
+/**
+ * AudioPreviewSync — plays secondary audio tracks alongside the main video
+ * during editing so the user can hear multiple tracks and judge their volumes.
+ * Uses hidden <audio> elements synced to the video player's playback position.
+ */
+function AudioPreviewSync({ videoId, audioTracks, trackSettings, playerRef }) {
+  const audioRefs = React.useRef([])
+  const syncIntervalRef = React.useRef(null)
+
+  // Build audio URLs for each track
+  const trackUrls = React.useMemo(() => {
+    if (!audioTracks || audioTracks.length === 0 || !videoId) return []
+    return audioTracks
+      .filter((t) => t.track_num != null)
+      .map((t) => `${getUrl()}/api/video/audio?id=${videoId}&track=${t.track_num}`)
+  }, [videoId, audioTracks])
+
+  // Sync playback state and position with the video player
+  React.useEffect(() => {
+    if (trackUrls.length === 0) return
+
+    const syncWithPlayer = () => {
+      const player = playerRef?.current
+      if (!player) return
+      const isPaused = player.paused?.() ?? true
+      const currentTime = player.currentTime?.() ?? 0
+
+      audioRefs.current.forEach((audio, i) => {
+        if (!audio) return
+        // Apply volume from track settings
+        const ts = trackSettings?.find((s) => s.track_num === audioTracks[i]?.track_num)
+        if (ts) {
+          audio.volume = ts.enabled ? Math.max(0, Math.min(1, (ts.volume ?? 100) / 100)) : 0
+          audio.muted = !ts.enabled
+        }
+        // Sync position
+        const drift = Math.abs(audio.currentTime - currentTime)
+        if (drift > 0.3 || (!isPaused && audio.paused)) {
+          audio.currentTime = currentTime
+        }
+        if (!isPaused && audio.paused) {
+          audio.play().catch(() => {})
+        } else if (isPaused && !audio.paused) {
+          audio.pause()
+        }
+      })
+    }
+
+    // Initial sync
+    syncWithPlayer()
+
+    // Periodic sync for smooth playback
+    syncIntervalRef.current = setInterval(syncWithPlayer, 150)
+
+    return () => {
+      if (syncIntervalRef.current) clearInterval(syncIntervalRef.current)
+      // Pause all audio elements on cleanup
+      audioRefs.current.forEach((a) => {
+        if (a) a.pause()
+      })
+    }
+  }, [trackUrls, trackSettings, playerRef, audioTracks])
+
+  if (trackUrls.length === 0) return null
+
+  return (
+    <div style={{ display: 'none' }} aria-hidden="true">
+      {trackUrls.map((url, i) => (
+        <audio
+          key={i}
+          ref={(el) => {
+            audioRefs.current[i] = el
+          }}
+          src={url}
+          preload="auto"
+        />
+      ))}
+    </div>
+  )
+}
+
 const VideoModal = ({
   open,
   onClose,
@@ -590,6 +671,8 @@ const VideoModal = ({
         }
       }
       await VideoService.updateDetails(vid.video_id, payload)
+      // Always bump player version so audio changes take effect even without crop
+      setPlayerVersion((v) => v + 1)
       if (cropApplied) {
         const videoId = vid.video_id
         clearInterval(cropPollRef.current)
@@ -1622,6 +1705,16 @@ const VideoModal = ({
                     getCurrentTime={() => playerRef.current?.currentTime() ?? 0}
                   />
                 </Box>
+              )}
+
+              {/* ── Audio preview during editing (hidden audio elements synced to video) ── */}
+              {editMode && authenticated && audioTracks && audioTracks.length > 0 && (
+                <AudioPreviewSync
+                  videoId={vid.video_id}
+                  audioTracks={audioTracks}
+                  trackSettings={trackSettings}
+                  playerRef={playerRef}
+                />
               )}
             </Paper>
           </motion.div>
