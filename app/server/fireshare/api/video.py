@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import re
@@ -37,6 +38,23 @@ def _stream_video_file(video_path):
 def _delete_if_exists(path):
     if path.exists():
         path.unlink()
+
+
+def _get_transcode_runtime_config(paths):
+    """Return the same GPU/encoder settings used by the normal transcode CLI."""
+    use_gpu = current_app.config.get('TRANSCODE_GPU', False)
+    encoder_preference = 'auto'
+
+    config_path = paths['data'] / 'config.json'
+    if config_path.exists():
+        try:
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+                encoder_preference = config.get('transcoding', {}).get('encoder_preference', 'auto')
+        except Exception as ex:
+            logger.warning(f"Could not read transcoding config from {config_path}: {ex}")
+
+    return use_gpu, encoder_preference
 
 
 def _clear_crop(video, video_info, paths, had_480p, had_720p, had_1080p):
@@ -136,6 +154,7 @@ def _retranscode_async(video_id, source_path, paths, do_480p, do_720p, do_1080p)
     """Transcode quality variants from source_path in a background thread."""
     derived_dir = paths["processed"] / "derived" / video_id
     app = current_app._get_current_object()
+    use_gpu, encoder_preference = _get_transcode_runtime_config(paths)
 
     heights = []
     if do_480p:
@@ -146,9 +165,21 @@ def _retranscode_async(video_id, source_path, paths, do_480p, do_720p, do_1080p)
         heights.append(1080)
 
     def run():
+        logger.info(
+            f"Re-transcoding saved video {video_id} quality variants "
+            f"(GPU: {use_gpu}, Encoder: {encoder_preference})"
+        )
         for height in heights:
             out_path = derived_dir / f"{video_id}-{height}p.mp4"
-            success, _ = util.transcode_video_quality(source_path, out_path, height)
+            success, _ = util.transcode_video_quality(
+                source_path,
+                out_path,
+                height,
+                use_gpu,
+                None,
+                encoder_preference,
+                data_path=paths['data'],
+            )
             with app.app_context():
                 vi = VideoInfo.query.filter_by(video_id=video_id).first()
                 if vi and success:
