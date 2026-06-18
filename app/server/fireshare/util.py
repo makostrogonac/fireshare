@@ -92,6 +92,25 @@ def remove_lock(path: Path, filename: str = "fireshare.lock"):
 
 # Transcoding status file functions
 TRANSCODING_STATUS_FILE = "transcoding_status.json"
+CLIP_RENDER_STATUS_DIR = "clip_render_status"
+
+
+def _atomic_write_json(path: Path, data: dict):
+    """Write JSON atomically so readers never see partial files."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_file = path.with_suffix(f"{path.suffix}.tmp")
+    try:
+        with open(tmp_file, 'w') as f:
+            json.dump(data, f)
+        os.replace(tmp_file, path)
+    except Exception:
+        try:
+            if tmp_file.exists():
+                os.remove(tmp_file)
+        except Exception:
+            pass
+        raise
+
 
 def write_transcoding_status(data_path: Path, current: int, total: int, current_video: str = None, pid: int = None, percent: float = None, eta_seconds: float = None, resolution: str = None):
     """
@@ -122,19 +141,11 @@ def write_transcoding_status(data_path: Path, current: int, total: int, current_
         status["eta_seconds"] = round(eta_seconds)
     if resolution is not None:
         status["resolution"] = resolution
-    tmp_file = status_file.with_suffix(f"{status_file.suffix}.tmp")
     try:
-        with open(tmp_file, 'w') as f:
-            json.dump(status, f)
         # Atomic replace prevents readers from seeing partial JSON.
-        os.replace(tmp_file, status_file)
+        _atomic_write_json(status_file, status)
     except Exception as e:
         logger.warning(f"Failed to write transcoding status: {e}")
-        try:
-            if tmp_file.exists():
-                os.remove(tmp_file)
-        except Exception:
-            pass
 
 def read_transcoding_status(data_path: Path) -> dict:
     """
@@ -164,6 +175,86 @@ def clear_transcoding_status(data_path: Path):
             os.remove(status_file)
         except Exception as e:
             logger.warning(f"Failed to remove transcoding status file: {e}")
+
+
+def _clip_render_status_path(data_path: Path, video_id: str) -> Path:
+    safe_video_id = re.sub(r'[^A-Za-z0-9_-]', '_', str(video_id or 'unknown'))
+    return data_path / CLIP_RENDER_STATUS_DIR / f"{safe_video_id}.json"
+
+
+def write_clip_render_status(
+    data_path: Path,
+    video_id: str,
+    is_running: bool,
+    phase: str = 'rendering',
+    percent: float = None,
+    eta_seconds: float = None,
+    message: str = None,
+    error: str = None,
+    pid: int = None,
+):
+    """Persist per-video crop/audio-merge render progress for reconnecting clients."""
+    status_file = _clip_render_status_path(data_path, video_id)
+    existing = read_clip_render_status(data_path, video_id)
+    now = datetime.utcnow().isoformat(timespec='seconds') + 'Z'
+    if pid is None:
+        pid = os.getpid()
+
+    status = {
+        'video_id': video_id,
+        'is_running': bool(is_running),
+        'phase': phase,
+        'pid': pid,
+        'started_at': existing.get('started_at') if existing.get('is_running') else now,
+        'updated_at': now,
+    }
+    if percent is not None:
+        status['percent'] = round(max(0, min(100, float(percent))), 1)
+    if eta_seconds is not None:
+        status['eta_seconds'] = max(0, round(eta_seconds))
+    if message is not None:
+        status['message'] = message
+    if error is not None:
+        status['error'] = error
+    if not is_running:
+        status['completed_at'] = now
+
+    try:
+        _atomic_write_json(status_file, status)
+    except Exception as e:
+        logger.warning(f"Failed to write clip render status for {video_id}: {e}")
+
+
+def read_clip_render_status(data_path: Path, video_id: str) -> dict:
+    """Read the latest crop/audio-merge render status for a video."""
+    status_file = _clip_render_status_path(data_path, video_id)
+    default_status = {
+        'video_id': video_id,
+        'is_running': False,
+        'phase': None,
+        'percent': None,
+        'eta_seconds': None,
+        'message': None,
+        'error': None,
+    }
+    if not status_file.exists():
+        return default_status
+    try:
+        with open(status_file, 'r') as f:
+            return {**default_status, **json.load(f)}
+    except Exception as e:
+        logger.warning(f"Failed to read clip render status for {video_id}: {e}")
+        return default_status
+
+
+def clear_clip_render_status(data_path: Path, video_id: str):
+    """Remove saved crop/audio-merge render status for a video."""
+    status_file = _clip_render_status_path(data_path, video_id)
+    if status_file.exists():
+        try:
+            os.remove(status_file)
+        except Exception as e:
+            logger.warning(f"Failed to remove clip render status for {video_id}: {e}")
 
 
 def video_id(path: Path, mb=16):
@@ -383,7 +474,29 @@ def calculate_transcode_timeout(video_path, base_timeout=7200):
         logger.debug(f"Could not determine video duration, using base timeout: {base_timeout}s")
         return base_timeout
 
-def create_video_crop(source_path, out_path, start_time=None, end_time=None):
+def _clip_segment_duration(source_path, start_time=None, end_time=None):
+    source_duration = get_video_duration(source_path) or 0
+    try:
+        start = float(start_time or 0)
+    except (TypeError, ValueError):
+        start = 0
+    try:
+        end = float(end_time) if end_time is not None else source_duration
+    except (TypeError, ValueError):
+        end = source_duration
+    if end <= 0 and source_duration:
+        end = source_duration
+    return max(0, end - start)
+
+
+def _run_crop_ffmpeg(cmd, source_path, start_time=None, end_time=None, progress_callback=None):
+    if progress_callback:
+        total_duration = _clip_segment_duration(source_path, start_time, end_time)
+        return run_ffmpeg_with_progress_callback(cmd, total_duration, progress_callback=progress_callback).returncode
+    return sp.call(cmd)
+
+
+def create_video_crop(source_path, out_path, start_time=None, end_time=None, progress_callback=None):
     """
     Stream-copy a segment of source_path into out_path using FFmpeg.
     start_time / end_time are in seconds (float). None means file start/end.
@@ -397,7 +510,7 @@ def create_video_crop(source_path, out_path, start_time=None, end_time=None):
         cmd += ['-to', str(end_time)]
     cmd += ['-i', str(source_path), '-c', 'copy', '-movflags', '+faststart', str(out_path)]
     logger.debug(f"$ {' '.join(cmd)}")
-    result = sp.call(cmd)
+    result = _run_crop_ffmpeg(cmd, source_path, start_time, end_time, progress_callback)
     if result == 0:
         logger.info(f'Created crop {str(out_path)} (start={start_time}, end={end_time})')
     else:
@@ -529,7 +642,7 @@ def create_audio_extract(source_path, out_path, track_index=None, original_quali
 
 
 def create_video_crop_with_audio(
-    source_path, out_path, start_time=None, end_time=None, audio_tracks=None
+    source_path, out_path, start_time=None, end_time=None, audio_tracks=None, progress_callback=None
 ):
     """
     Create a cropped video with optional custom audio mixing.
@@ -541,7 +654,7 @@ def create_video_crop_with_audio(
       with copied video.
     """
     if audio_tracks is None:
-        return create_video_crop(source_path, out_path, start_time, end_time)
+        return create_video_crop(source_path, out_path, start_time, end_time, progress_callback=progress_callback)
 
     try:
         audio_tracks = normalize_audio_tracks(source_path, audio_tracks)
@@ -573,7 +686,7 @@ def create_video_crop_with_audio(
                 str(out_path),
             ]
             logger.debug(f"$ {' '.join(cmd)}")
-            result = sp.call(cmd)
+            result = _run_crop_ffmpeg(cmd, source_path, start_time, end_time, progress_callback)
             if result == 0:
                 logger.info(
                     f'Created crop with copied audio {str(out_path)} '
@@ -633,7 +746,7 @@ def create_video_crop_with_audio(
         ]
 
     logger.debug(f"$ {' '.join(cmd)}")
-    result = sp.call(cmd)
+    result = _run_crop_ffmpeg(cmd, source_path, start_time, end_time, progress_callback)
     if result == 0:
         logger.info(
             f'Created crop with custom audio {str(out_path)} '
@@ -936,32 +1049,16 @@ def _get_encoder_candidates(use_gpu=False, encoder_preference='auto'):
             return [h264_nvenc, av1_nvenc, h264_cpu, av1_cpu]
         return [h264_cpu, av1_cpu]
 
-def run_ffmpeg_with_progress(cmd, total_duration, timeout_seconds=None, data_path=None):
+def run_ffmpeg_with_progress_callback(cmd, total_duration, timeout_seconds=None, progress_callback=None):
     """
-    Run an FFmpeg command with real-time progress tracking via -progress flag.
+    Run an FFmpeg command with real-time progress parsing via -progress pipe:1.
 
-    If data_path is provided, reads the existing status file and updates it with
-    percent/speed. Progress is throttled to every 0.5 seconds to avoid I/O overhead.
-    stderr is drained in a background thread to prevent pipe buffer deadlock and
-    is logged at warning level if the process exits with a non-zero code.
+    progress_callback, when provided, receives (percent, eta_seconds, speed). Progress
+    is throttled to every 0.5 seconds. stderr is drained in a background thread to
+    prevent pipe buffer deadlock and logged if ffmpeg exits unsuccessfully.
     """
-    # Insert -progress pipe:1 before output file (last arg)
+    # Insert -progress pipe:1 before output file (last arg).
     cmd_with_progress = cmd[:-1] + ['-progress', 'pipe:1'] + [cmd[-1]]
-
-    # Snapshot the stable status fields (current, total, current_video, pid, resolution)
-    # once before ffmpeg starts. Using a snapshot prevents a concurrent write (e.g. from
-    # an upload scan resetting total=0) from being silently preserved through the
-    # read-modify-write that happens on every progress tick.
-    status_snapshot = {}
-    if data_path:
-        existing = read_transcoding_status(data_path)
-        status_snapshot = {
-            'current': existing.get('current', 0),
-            'total': existing.get('total', 0),
-            'current_video': existing.get('current_video'),
-            'pid': existing.get('pid'),
-            'resolution': existing.get('resolution'),
-        }
 
     process = sp.Popen(cmd_with_progress, stdout=sp.PIPE, stderr=sp.PIPE, text=True)
     last_update = 0
@@ -969,19 +1066,29 @@ def run_ffmpeg_with_progress(cmd, total_duration, timeout_seconds=None, data_pat
     percent = None
     current_seconds = 0
 
-    # Drain stderr in a background thread to prevent pipe buffer from filling
-    # and blocking ffmpeg. Collected lines are logged on failure.
     stderr_lines = []
+
     def _drain_stderr():
         for line in process.stderr:
             stderr_lines.append(line.rstrip())
+
     stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
     stderr_thread.start()
 
-    # -progress outputs clean key=value lines:
-    # out_time_us=83450000
-    # speed=1.5x
-    # progress=continue
+    def emit_progress(force=False):
+        nonlocal last_update
+        if not progress_callback or percent is None:
+            return
+        now = time.time()
+        if not force and now - last_update < 0.5:
+            return
+        eta_seconds = None
+        if speed and speed > 0 and total_duration:
+            remaining_seconds = max(0, total_duration - current_seconds)
+            eta_seconds = remaining_seconds / speed
+        progress_callback(percent, eta_seconds, speed)
+        last_update = now
+
     try:
         for line in process.stdout:
             line = line.strip()
@@ -990,7 +1097,7 @@ def run_ffmpeg_with_progress(cmd, total_duration, timeout_seconds=None, data_pat
 
             key, value = line.split('=', 1)
 
-            if key == 'out_time_us' and total_duration:
+            if key in ('out_time_us', 'out_time_ms') and total_duration:
                 try:
                     current_us = int(value)
                     current_seconds = current_us / 1_000_000
@@ -1005,29 +1112,11 @@ def run_ffmpeg_with_progress(cmd, total_duration, timeout_seconds=None, data_pat
                     pass
 
             elif key == 'progress':
-                # 'continue' or 'end' - good time to update status
-                now = time.time()
-                if now - last_update >= 0.5 and data_path and percent is not None:
-                    # Calculate ETA: remaining time / encoding speed
-                    eta_seconds = None
-                    if speed and speed > 0 and total_duration:
-                        remaining_seconds = total_duration - current_seconds
-                        eta_seconds = remaining_seconds / speed
-
-                    # Update status using the snapshot captured before ffmpeg started.
-                    # This prevents a concurrent write (e.g. an upload scan resetting
-                    # total=0 mid-transcode) from corrupting task count or PID.
-                    write_transcoding_status(
-                        data_path,
-                        status_snapshot.get('current', 0),
-                        status_snapshot.get('total', 0),
-                        status_snapshot.get('current_video'),
-                        status_snapshot.get('pid'),
-                        percent,
-                        eta_seconds,
-                        status_snapshot.get('resolution')
-                    )
-                    last_update = now
+                if value == 'end' and total_duration:
+                    percent = 100
+                    emit_progress(force=True)
+                else:
+                    emit_progress()
 
         process.wait(timeout=timeout_seconds)
     except sp.TimeoutExpired:
@@ -1043,6 +1132,48 @@ def run_ffmpeg_with_progress(cmd, total_duration, timeout_seconds=None, data_pat
             logger.warning(f"  ffmpeg: {line}")
 
     return process
+
+
+def run_ffmpeg_with_progress(cmd, total_duration, timeout_seconds=None, data_path=None):
+    """
+    Run an FFmpeg command with real-time progress tracking via -progress flag.
+
+    If data_path is provided, reads the existing status file and updates it with
+    percent/speed. Progress is throttled to every 0.5 seconds to avoid I/O overhead.
+    """
+    # Snapshot the stable status fields (current, total, current_video, pid, resolution)
+    # once before ffmpeg starts. Using a snapshot prevents a concurrent write (e.g. from
+    # an upload scan resetting total=0) from being silently preserved through the
+    # read-modify-write that happens on every progress tick.
+    status_snapshot = {}
+    if data_path:
+        existing = read_transcoding_status(data_path)
+        status_snapshot = {
+            'current': existing.get('current', 0),
+            'total': existing.get('total', 0),
+            'current_video': existing.get('current_video'),
+            'pid': existing.get('pid'),
+            'resolution': existing.get('resolution'),
+        }
+
+    def update_status(percent, eta_seconds, _speed):
+        if not data_path:
+            return
+        # Update status using the snapshot captured before ffmpeg started.
+        # This prevents a concurrent write (e.g. an upload scan resetting total=0
+        # mid-transcode) from corrupting task count or PID.
+        write_transcoding_status(
+            data_path,
+            status_snapshot.get('current', 0),
+            status_snapshot.get('total', 0),
+            status_snapshot.get('current_video'),
+            status_snapshot.get('pid'),
+            percent,
+            eta_seconds,
+            status_snapshot.get('resolution')
+        )
+
+    return run_ffmpeg_with_progress_callback(cmd, total_duration, timeout_seconds, update_status)
 
 
 def is_video_10bit(video_path):

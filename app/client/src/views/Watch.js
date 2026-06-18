@@ -1,9 +1,10 @@
 import React, { useRef } from 'react'
 import { saveProgress, getResumeTime } from '../common/videoProgress'
 import { useLocation, useParams } from 'react-router-dom'
-import { Button, CircularProgress, Divider, IconButton, TextField, Tooltip, Typography, Box } from '@mui/material'
+import { Button, Chip, CircularProgress, Divider, IconButton, TextField, Tooltip, Typography, Box } from '@mui/material'
 import { Helmet } from 'react-helmet'
 import ContentCopyIcon from '@mui/icons-material/ContentCopy'
+import ContentCutIcon from '@mui/icons-material/ContentCut'
 import AccessTimeIcon from '@mui/icons-material/AccessTime'
 import LockIcon from '@mui/icons-material/Lock'
 import SnackbarAlert from '../components/alert/SnackbarAlert'
@@ -357,7 +358,7 @@ const Watch = ({ authenticated }) => {
               >
                 {details?.info?.title || 'Untitled'}
               </Typography>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
                 {views != null && (
                   <Typography sx={{ fontSize: 14, color: '#FFFFFF55' }}>
                     {views.toLocaleString()} {views === 1 ? 'view' : 'views'}
@@ -374,6 +375,24 @@ const Watch = ({ authenticated }) => {
                       })}
                     </Typography>
                   </>
+                )}
+                {(details?.info?.edited || details?.info?.has_crop) && (
+                  <Tooltip title="This video has a saved edit applied">
+                    <Chip
+                      size="small"
+                      icon={<ContentCutIcon sx={{ fontSize: '14px !important', color: '#90CAF9 !important' }} />}
+                      label="Edited"
+                      sx={{
+                        height: 22,
+                        bgcolor: '#3399FF1F',
+                        border: '1px solid #3399FF66',
+                        color: '#D7ECFF',
+                        fontSize: 11,
+                        fontWeight: 700,
+                        '& .MuiChip-label': { px: 0.75 },
+                      }}
+                    />
+                  </Tooltip>
                 )}
               </Box>
             </Box>

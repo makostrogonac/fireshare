@@ -101,6 +101,7 @@ class VideoInfo(db.Model):
             "start_time": self.start_time,
             "end_time": self.end_time,
             "has_crop": self.has_crop or False,
+            "edited": self.has_crop or False,
             "has_password": bool(self.password_hash),
         }
 

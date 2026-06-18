@@ -18,6 +18,9 @@ const service = {
   getDetails(id) {
     return Api().get(`/api/video/details/${id}`)
   },
+  getCropStatus(id) {
+    return Api().get(`/api/video/${id}/crop-status`)
+  },
   getRandomVideo() {
     return Api().get('/api/video/random')
   },

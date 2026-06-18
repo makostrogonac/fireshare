@@ -10,6 +10,7 @@ import {
   Divider,
   IconButton,
   InputAdornment,
+  LinearProgress,
   Modal,
   Paper,
   Popover,
@@ -22,6 +23,7 @@ import TagChip from '../ui/TagChip'
 import { motion } from 'framer-motion'
 import { DayPicker } from 'react-day-picker'
 import ContentCopyIcon from '@mui/icons-material/ContentCopy'
+import ContentCutIcon from '@mui/icons-material/ContentCut'
 import AccessTimeIcon from '@mui/icons-material/AccessTime'
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth'
 import CloseIcon from '@mui/icons-material/Close'
@@ -501,6 +503,7 @@ const VideoModal = ({
   const [thumbnailLoaded, setThumbnailLoaded] = React.useState(false)
   const [suggestions, setSuggestions] = React.useState([])
   const [cropProcessing, setCropProcessing] = React.useState(false)
+  const [cropStatus, setCropStatus] = React.useState(null)
   const [playerVersion, setPlayerVersion] = React.useState(0)
   const [audioTracks, setAudioTracks] = React.useState(null)
   const [trackSettings, setTrackSettings] = React.useState([])
@@ -510,6 +513,8 @@ const VideoModal = ({
   const thumbnailInputRef = React.useRef(null)
   const lastSavedRef = useRef(0)
   const cropPollRef = useRef(null)
+  const cropProcessingRef = useRef(false)
+  const cropFailureNotifiedRef = useRef(false)
 
   useEffect(() => {
     if (!open || editMode) return
@@ -679,6 +684,9 @@ const VideoModal = ({
       setCropStart(null)
       setCropEnd(null)
       setHasCustomPoster(false)
+      setCropStatus(null)
+      setCropProcessing(false)
+      cropFailureNotifiedRef.current = false
       setAudioTracks(null)
       setTrackSettings([])
       setPosterCacheKey(Date.now())
@@ -717,11 +725,70 @@ const VideoModal = ({
   }, [open])
 
   useEffect(() => {
+    cropProcessingRef.current = cropProcessing
+  }, [cropProcessing])
+
+  useEffect(() => {
     if (!open) {
       clearInterval(cropPollRef.current)
       setCropProcessing(false)
+      setCropStatus(null)
     }
   }, [open])
+
+  useEffect(() => {
+    if (!open || !videoId || !authenticated) return undefined
+
+    let cancelled = false
+    const refreshDetailsAfterRender = async () => {
+      try {
+        const res = await VideoService.getDetails(videoId)
+        if (cancelled) return
+        setVideo((prev) => (prev ? { ...prev, ...res.data, info: { ...prev.info, ...res.data.info } } : res.data))
+        updateCallback?.({ id: videoId, ...res.data.info })
+        setPlayerVersion((v) => v + 1)
+        setPosterCacheKey(Date.now())
+      } catch {
+        // ignore transient refresh errors; the next poll/open will retry
+      }
+    }
+
+    const pollCropStatus = async () => {
+      try {
+        const res = await VideoService.getCropStatus(videoId)
+        if (cancelled) return
+        const status = res.data || {}
+        setCropStatus(status)
+
+        if (status.is_running) {
+          cropFailureNotifiedRef.current = false
+          setCropProcessing(true)
+          return
+        }
+
+        if (status.error && !cropFailureNotifiedRef.current) {
+          cropFailureNotifiedRef.current = true
+          setAlert({ type: 'error', message: status.error || 'Clip render failed', open: true })
+        }
+
+        if (cropProcessingRef.current) {
+          await refreshDetailsAfterRender()
+        }
+        setCropProcessing(false)
+      } catch {
+        // keep the current overlay state if the poll fails temporarily
+      }
+    }
+
+    pollCropStatus()
+    clearInterval(cropPollRef.current)
+    cropPollRef.current = setInterval(pollCropStatus, 2000)
+
+    return () => {
+      cancelled = true
+      clearInterval(cropPollRef.current)
+    }
+  }, [open, videoId, authenticated, updateCallback])
 
   const handleGameLinked = async (game, warning) => {
     try {
@@ -834,6 +901,8 @@ const VideoModal = ({
       setVideo((prev) => ({ ...prev, info: { ...prev.info, has_crop: false } }))
     }
     if (renderApplied) {
+      const message = audioTracksPayload !== null ? 'Merging selected audio tracks…' : 'Cropping clip…'
+      setCropStatus({ is_running: true, phase: audioTracksPayload !== null ? 'audio_mix' : 'crop', percent: 0, message })
       setCropProcessing(true)
     }
     if (cropCleared) {
@@ -868,26 +937,8 @@ const VideoModal = ({
         payload.audio_tracks = audioTracksPayload
       }
       await VideoService.updateDetails(vid.video_id, payload)
-      // Always bump player version so audio changes take effect even without crop
-      setPlayerVersion((v) => v + 1)
-      if (renderApplied) {
-        const videoId = vid.video_id
-        clearInterval(cropPollRef.current)
-        cropPollRef.current = setInterval(async () => {
-          try {
-            const res = await VideoService.getDetails(videoId)
-            if (res.data?.info?.has_crop) {
-              clearInterval(cropPollRef.current)
-              setVideo((prev) => ({ ...prev, info: { ...prev.info, ...res.data.info } }))
-              setPlayerVersion((v) => v + 1)
-              setCropProcessing(false)
-              setPosterCacheKey(Date.now())
-            }
-          } catch {
-            // ignore transient poll errors
-          }
-        }, 2000)
-      }
+      // Always bump player version so non-rendering metadata/audio changes refresh immediately.
+      if (!renderApplied) setPlayerVersion((v) => v + 1)
     } catch {
       setAlert({ type: 'error', message: 'An error occurred trying to save changes', open: true })
       if (renderApplied) setCropProcessing(false)
@@ -1021,6 +1072,9 @@ const VideoModal = ({
   const videoH_css = `min(calc((100vw - 192px - clamp(280px, 24vw, 420px)) / ${ar}), calc(100vh - 192px))`
   // Width: height × aspect ratio.
   const videoW_css = `calc((${videoH_css}) * ${ar})`
+  const cropProgress = typeof cropStatus?.percent === 'number' ? Math.max(0, Math.min(100, cropStatus.percent)) : null
+  const cropEta = typeof cropStatus?.eta_seconds === 'number' ? cropStatus.eta_seconds : null
+  const cropMessage = cropStatus?.message || 'Rendering edited clip…'
 
   return (
     <>
@@ -1129,10 +1183,46 @@ const VideoModal = ({
                         borderRadius: 'inherit',
                       }}
                     >
-                      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1.5 }}>
-                        <CircularProgress size={48} sx={{ color: '#fff' }} />
-                        <Typography variant="body2" sx={{ color: '#fff', fontWeight: 500, letterSpacing: '0.02em' }}>
-                          Cropping video...
+                      <Box
+                        sx={{
+                          width: 'min(420px, 82%)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          gap: 1.25,
+                          bgcolor: 'rgba(2, 13, 26, 0.78)',
+                          border: '1px solid #FFFFFF1F',
+                          borderRadius: '12px',
+                          px: 2,
+                          py: 2,
+                        }}
+                      >
+                        <Typography variant="body2" sx={{ color: '#fff', fontWeight: 700, letterSpacing: '0.02em' }}>
+                          {cropMessage}
+                        </Typography>
+                        <LinearProgress
+                          variant={cropProgress == null ? 'indeterminate' : 'determinate'}
+                          value={cropProgress ?? 0}
+                          sx={{
+                            width: '100%',
+                            height: 8,
+                            borderRadius: 999,
+                            bgcolor: '#FFFFFF1A',
+                            '& .MuiLinearProgress-bar': { borderRadius: 999, bgcolor: '#3399FF' },
+                          }}
+                        />
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+                          <Typography sx={{ color: '#FFFFFFB3', fontSize: 12 }}>
+                            {cropProgress == null ? 'Preparing…' : `${Math.round(cropProgress)}%`}
+                          </Typography>
+                          {cropEta != null && cropEta > 1 && (
+                            <Typography sx={{ color: '#FFFFFF80', fontSize: 12 }}>
+                              ~{Math.ceil(cropEta)}s left
+                            </Typography>
+                          )}
+                        </Box>
+                        <Typography sx={{ color: '#FFFFFF66', fontSize: 11, textAlign: 'center' }}>
+                          You can leave this page and reopen the video to continue tracking this render.
                         </Typography>
                       </Box>
                     </Box>
@@ -1261,6 +1351,24 @@ const VideoModal = ({
                                   })}
                                 </Typography>
                               </>
+                            )}
+                            {(vid.info?.edited || vid.info?.has_crop) && (
+                              <Tooltip title="This video has a saved edit applied">
+                                <Chip
+                                  size="small"
+                                  icon={<ContentCutIcon sx={{ fontSize: '14px !important', color: '#90CAF9 !important' }} />}
+                                  label="Edited"
+                                  sx={{
+                                    height: 22,
+                                    bgcolor: '#3399FF1F',
+                                    border: '1px solid #3399FF66',
+                                    color: '#D7ECFF',
+                                    fontSize: 11,
+                                    fontWeight: 700,
+                                    '& .MuiChip-label': { px: 0.75 },
+                                  }}
+                                />
+                              </Tooltip>
                             )}
                           </Box>
                           {selectedGame && (

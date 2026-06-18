@@ -143,13 +143,39 @@ def _apply_crop_async(video, video_info, start_time, end_time, paths, audio_trac
         thumbnail_skip = 0
 
     def run():
-        if audio_tracks is not None:
-            success = util.create_video_crop_with_audio(
-                original_path, cropped_path, start_time, end_time,
-                audio_tracks=audio_tracks
+        phase = 'audio_mix' if audio_tracks is not None else 'crop'
+        message = 'Merging selected audio tracks…' if audio_tracks is not None else 'Cropping clip…'
+        util.write_clip_render_status(
+            paths['data'], video_id, True, phase=phase, percent=0, message=message
+        )
+
+        def on_crop_progress(percent, eta_seconds, _speed):
+            util.write_clip_render_status(
+                paths['data'], video_id, True,
+                phase=phase,
+                percent=percent,
+                eta_seconds=eta_seconds,
+                message=message,
             )
-        else:
-            success = util.create_video_crop(original_path, cropped_path, start_time, end_time)
+
+        failure_message = 'FFmpeg failed while rendering the edited clip.'
+        try:
+            if audio_tracks is not None:
+                success = util.create_video_crop_with_audio(
+                    original_path, cropped_path, start_time, end_time,
+                    audio_tracks=audio_tracks,
+                    progress_callback=on_crop_progress,
+                )
+            else:
+                success = util.create_video_crop(
+                    original_path, cropped_path, start_time, end_time,
+                    progress_callback=on_crop_progress,
+                )
+        except Exception as ex:
+            logger.exception(f"Crop render crashed for video {video_id}: {ex}")
+            success = False
+            failure_message = str(ex) or failure_message
+
         with app.app_context():
             vi = VideoInfo.query.filter_by(video_id=video_id).first()
             if not vi:
@@ -161,9 +187,22 @@ def _apply_crop_async(video, video_info, start_time, end_time, paths, audio_trac
                 crop_duration = (end_time or vi.duration) - (start_time or 0)
                 poster_time = int(crop_duration * thumbnail_skip)
                 util.create_poster(cropped_path, derived_dir / "poster.jpg", poster_time)
+                util.write_clip_render_status(
+                    paths['data'], video_id, False,
+                    phase=phase,
+                    percent=100,
+                    eta_seconds=0,
+                    message='Edited clip ready.',
+                )
                 if had_480p or had_720p or had_1080p:
                     _retranscode_async(video_id, cropped_path, paths, had_480p, had_720p, had_1080p)
             else:
+                util.write_clip_render_status(
+                    paths['data'], video_id, False,
+                    phase=phase,
+                    message='Clip render failed.',
+                    error=failure_message,
+                )
                 logger.error(f"Crop failed for video {video_id}")
 
     import threading
@@ -713,6 +752,17 @@ def handle_video_details(id):
             return jsonify({
                 'message': 'Video details not found'
             }), 404
+
+
+@api.route('/api/video/<video_id>/crop-status', methods=['GET'])
+@login_required
+def get_video_crop_status(video_id):
+    """Return persistent crop/audio-merge progress for the video editor."""
+    video = Video.query.filter_by(video_id=video_id).first()
+    if not video:
+        return jsonify({'message': 'Video not found'}), 404
+    status = util.read_clip_render_status(current_app.config['PATHS']['data'], video_id)
+    return jsonify(status)
 
 
 @api.route('/api/video/poster', methods=['GET'])

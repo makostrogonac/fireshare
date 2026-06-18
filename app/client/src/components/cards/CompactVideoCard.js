@@ -8,6 +8,7 @@ import VisibilityIcon from '@mui/icons-material/Visibility'
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff'
 import MoreVertIcon from '@mui/icons-material/MoreVert'
 import EditIcon from '@mui/icons-material/Edit'
+import ContentCutIcon from '@mui/icons-material/ContentCut'
 import SlowMotionVideoIcon from '@mui/icons-material/SlowMotionVideo'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import FolderIcon from '@mui/icons-material/Folder'
@@ -90,6 +91,7 @@ const CompactVideoCard = ({
   const videoRef = React.useRef(null)
 
   const isLocked = !authenticated && !unlockedLocally && video.info?.has_password
+  const isEdited = Boolean((intVideo?.info || video.info)?.edited || (intVideo?.info || video.info)?.has_crop)
 
   React.useEffect(() => {
     const v = videoRef.current
@@ -556,6 +558,31 @@ const CompactVideoCard = ({
                   }}
                 />
               </Box>
+            )}
+
+            {/* Edited badge */}
+            {isEdited && (
+              <Tooltip title="Edited video">
+                <Box
+                  sx={{
+                    position: 'absolute',
+                    top: editMode ? 48 : 8,
+                    left: 8,
+                    width: 30,
+                    height: 30,
+                    borderRadius: '8px',
+                    bgcolor: '#000000BF',
+                    border: '1px solid #3399FF99',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 3,
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.45)',
+                  }}
+                >
+                  <ContentCutIcon sx={{ fontSize: 18, color: '#90CAF9' }} />
+                </Box>
+              </Tooltip>
             )}
 
             {/* Duration badge */}
