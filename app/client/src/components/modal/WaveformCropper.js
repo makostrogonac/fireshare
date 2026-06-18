@@ -631,39 +631,42 @@ const WaveformCropper = React.forwardRef(
                       '&.Mui-disabled': { color: '#FFFFFF15' },
                     }}
                   />
-                  <Box
-                    component="input"
-                    type="number"
-                    min="0"
-                    max="200"
-                    value={volume}
-                    disabled={!enabled}
-                    onChange={(e) => {
-                      const v = parseInt(e.target.value)
-                      if (!isNaN(v) && v >= 0 && v <= 200) {
-                        onTrackSettingChange?.(t.track_num, { enabled, volume: v })
-                      }
-                    }}
-                    sx={{
-                      width: 48,
-                      bgcolor: enabled ? '#FFFFFF0D' : '#FFFFFF05',
-                      border: '1px solid',
-                      borderColor: enabled ? '#FFFFFF26' : '#FFFFFF10',
-                      borderRadius: '4px',
-                      color: enabled ? '#FFFFFF' : '#FFFFFF33',
-                      fontSize: 11,
-                      fontFamily: 'monospace',
-                      padding: '2px 4px',
-                      outline: 'none',
-                      textAlign: 'right',
-                      '&:focus': { borderColor: '#3399FF' },
-                      '&::-webkit-inner-spin-button, &::-webkit-outer-spin-button': {
-                        WebkitAppearance: 'none',
-                        margin: 0,
-                      },
-                      MozAppearance: 'textfield',
-                    }}
-                  />
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.35 }}>
+                    <Box
+                      component="input"
+                      type="number"
+                      min="0"
+                      max="200"
+                      value={volume}
+                      disabled={!enabled}
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value, 10)
+                        if (!isNaN(v) && v >= 0 && v <= 200) {
+                          onTrackSettingChange?.(t.track_num, { enabled, volume: v })
+                        }
+                      }}
+                      sx={{
+                        width: 48,
+                        bgcolor: enabled ? '#FFFFFF0D' : '#FFFFFF05',
+                        border: '1px solid',
+                        borderColor: enabled ? '#FFFFFF26' : '#FFFFFF10',
+                        borderRadius: '4px',
+                        color: enabled ? '#FFFFFF' : '#FFFFFF33',
+                        fontSize: 11,
+                        fontFamily: 'monospace',
+                        padding: '2px 4px',
+                        outline: 'none',
+                        textAlign: 'right',
+                        '&:focus': { borderColor: '#3399FF' },
+                        '&::-webkit-inner-spin-button, &::-webkit-outer-spin-button': {
+                          WebkitAppearance: 'none',
+                          margin: 0,
+                        },
+                        MozAppearance: 'textfield',
+                      }}
+                    />
+                    <Typography sx={{ fontSize: 11, color: enabled ? '#FFFFFF88' : '#FFFFFF33' }}>%</Typography>
+                  </Box>
                 </Box>
               )
             })}

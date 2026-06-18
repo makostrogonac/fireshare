@@ -4,6 +4,7 @@ import {
   Autocomplete,
   Box,
   Button,
+  Checkbox,
   Chip,
   CircularProgress,
   Divider,
@@ -12,6 +13,7 @@ import {
   Modal,
   Paper,
   Popover,
+  Slider,
   TextField,
   Tooltip,
   Typography,
@@ -189,6 +191,137 @@ const DateField = ({ selectedDate, selectedTime, onDateChange, onTimeChange }) =
  * The main video element is muted while this preview is mounted to avoid doubling
  * the browser-selected default audio track.
  */
+function AudioTrackMixer({ audioTracks, trackSettings, onTrackSettingChange }) {
+  if (!audioTracks || audioTracks.length === 0) return null
+
+  const enabledCount = trackSettings?.filter((s) => s.enabled).length ?? audioTracks.length
+
+  return (
+    <Box
+      sx={{
+        bgcolor: '#061526',
+        border: '1px solid #3399FF33',
+        borderRadius: '10px',
+        p: 1.5,
+      }}
+    >
+      <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', mb: 1 }}>
+        <Typography sx={{ ...labelSx, mb: 0, color: '#9DCCFF' }}>Audio Mix</Typography>
+        <Typography sx={{ fontSize: 11, color: '#FFFFFF66' }}>{enabledCount}/{audioTracks.length} enabled</Typography>
+      </Box>
+      <Typography sx={{ fontSize: 12, color: '#FFFFFF80', mb: 1.25, lineHeight: 1.4 }}>
+        The video player's own audio is muted while editing. Use these controls to preview and save the final mix.
+      </Typography>
+
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+        {audioTracks.map((track, i) => {
+          const setting = trackSettings?.find((s) => s.track_num === track.track_num)
+          const enabled = setting ? setting.enabled : true
+          const volume = setting?.volume ?? 100
+          const label = track.title || `Track ${i + 1}`
+          const meta = [track.language && track.language !== 'und' ? track.language : null, track.codec_name]
+            .filter(Boolean)
+            .join(' · ')
+
+          const setVolume = (value) => {
+            const v = Math.max(0, Math.min(200, value))
+            onTrackSettingChange?.(track.track_num, { enabled, volume: v })
+          }
+
+          return (
+            <Box
+              key={track.track_num ?? i}
+              sx={{
+                bgcolor: enabled ? '#FFFFFF0A' : '#FFFFFF05',
+                border: '1px solid',
+                borderColor: enabled ? '#FFFFFF1F' : '#FFFFFF0F',
+                borderRadius: '8px',
+                p: 1,
+              }}
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.75 }}>
+                <Checkbox
+                  checked={enabled}
+                  size="small"
+                  onChange={(e) => onTrackSettingChange?.(track.track_num, { enabled: e.target.checked, volume })}
+                  sx={{
+                    color: '#FFFFFF44',
+                    p: 0,
+                    '&.Mui-checked': { color: '#3399FF' },
+                    '& .MuiSvgIcon-root': { fontSize: 18 },
+                  }}
+                />
+                <Box sx={{ minWidth: 0, flex: 1 }}>
+                  <Typography sx={{ fontSize: 13, color: enabled ? 'white' : '#FFFFFF66', fontWeight: 700 }} noWrap>
+                    {label}
+                  </Typography>
+                  {meta && (
+                    <Typography sx={{ fontSize: 10, color: '#FFFFFF55' }} noWrap>
+                      {meta}
+                    </Typography>
+                  )}
+                </Box>
+              </Box>
+
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Typography sx={{ fontSize: 10, color: '#FFFFFF66', width: 38 }}>Volume</Typography>
+                <Slider
+                  size="small"
+                  value={volume}
+                  min={0}
+                  max={200}
+                  disabled={!enabled}
+                  onChange={(_, v) => setVolume(Array.isArray(v) ? v[0] : v)}
+                  sx={{
+                    flex: 1,
+                    color: enabled ? '#3399FF' : '#FFFFFF22',
+                    '& .MuiSlider-thumb': { width: 13, height: 13 },
+                    '&.Mui-disabled': { color: '#FFFFFF15' },
+                  }}
+                />
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.35 }}>
+                  <Box
+                    component="input"
+                    type="number"
+                    min="0"
+                    max="200"
+                    value={volume}
+                    disabled={!enabled}
+                    onChange={(e) => {
+                      const v = parseInt(e.target.value, 10)
+                      if (!isNaN(v)) setVolume(v)
+                    }}
+                    sx={{
+                      width: 46,
+                      bgcolor: enabled ? '#FFFFFF12' : '#FFFFFF05',
+                      border: '1px solid',
+                      borderColor: enabled ? '#FFFFFF33' : '#FFFFFF10',
+                      borderRadius: '5px',
+                      color: enabled ? '#FFFFFF' : '#FFFFFF33',
+                      fontSize: 12,
+                      fontFamily: 'monospace',
+                      p: '2px 4px',
+                      outline: 'none',
+                      textAlign: 'right',
+                      '&:focus': { borderColor: '#3399FF' },
+                      '&::-webkit-inner-spin-button, &::-webkit-outer-spin-button': {
+                        WebkitAppearance: 'none',
+                        margin: 0,
+                      },
+                      MozAppearance: 'textfield',
+                    }}
+                  />
+                  <Typography sx={{ fontSize: 11, color: enabled ? '#FFFFFF88' : '#FFFFFF33' }}>%</Typography>
+                </Box>
+              </Box>
+            </Box>
+          )
+        })}
+      </Box>
+    </Box>
+  )
+}
+
 function AudioPreviewSync({ videoId, audioTracks, trackSettings, playerRef }) {
   const audioRefs = React.useRef([])
   const audioContextRef = React.useRef(null)
@@ -980,6 +1113,7 @@ const VideoModal = ({
                       playerRef.current = player
                     }}
                     startTime={getResumeTime(vid.video_id, vid.info?.duration)}
+                    forceMuted={editMode}
                     fill={true}
                     fluid={false}
                     playsinline={true}
@@ -1228,6 +1362,15 @@ const VideoModal = ({
                           </Typography>
                         )}
                       </Box>
+                    )}
+
+                    {/* Audio mix controls (edit mode only) */}
+                    {editMode && authenticated && audioTracks && audioTracks.length > 0 && (
+                      <AudioTrackMixer
+                        audioTracks={audioTracks}
+                        trackSettings={trackSettings}
+                        onTrackSettingChange={handleTrackSettingChange}
+                      />
                     )}
 
                     {/* Game search (edit mode only) */}

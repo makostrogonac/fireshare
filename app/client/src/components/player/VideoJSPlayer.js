@@ -20,7 +20,7 @@ const BUFFER_COUNT_WINDOW_MS = 30000
 // Create the Video.js 10 player instance (module-level singleton)
 const Player = createPlayer({ features: videoFeatures })
 
-function PlayerEffects({ sources, onSourceChange, onTimeUpdate, onReady, startTime }) {
+function PlayerEffects({ sources, onSourceChange, onTimeUpdate, onReady, startTime, forceMuted = false }) {
   const store = Player.usePlayer()
   const media = Player.useMedia()
   const currentTime = Player.usePlayer((s) => s.currentTime)
@@ -28,6 +28,7 @@ function PlayerEffects({ sources, onSourceChange, onTimeUpdate, onReady, startTi
   const onReadyRef = useRef(onReady)
   const startTimeApplied = useRef(false)
   const readyFired = useRef(false)
+  const forcedMuteStateRef = useRef(null)
 
   useEffect(() => {
     onTimeUpdateRef.current = onTimeUpdate
@@ -69,6 +70,46 @@ function PlayerEffects({ sources, onSourceChange, onTimeUpdate, onReady, startTi
       }
     }
   }, [media, playerWrapper])
+
+  // --- forceMuted: used by the editor audio preview to prevent doubled audio --
+  useEffect(() => {
+    if (!media) return undefined
+
+    const restoreOriginalVolume = () => {
+      if (!forcedMuteStateRef.current) return
+      media.muted = forcedMuteStateRef.current.muted
+      media.volume = forcedMuteStateRef.current.volume
+      forcedMuteStateRef.current = null
+    }
+
+    if (!forceMuted) {
+      restoreOriginalVolume()
+      return undefined
+    }
+
+    if (!forcedMuteStateRef.current) {
+      forcedMuteStateRef.current = { muted: media.muted, volume: media.volume }
+    }
+
+    let applying = false
+    const enforceMute = () => {
+      if (applying) return
+      if (!media.muted || media.volume !== 0) {
+        applying = true
+        media.muted = true
+        media.volume = 0
+        applying = false
+      }
+    }
+
+    enforceMute()
+    media.addEventListener('volumechange', enforceMute)
+
+    return () => {
+      media.removeEventListener('volumechange', enforceMute)
+      restoreOriginalVolume()
+    }
+  }, [media, forceMuted])
 
   // --- startTime: seek to the requested position once the player is ready ----
   useEffect(() => {
@@ -347,6 +388,7 @@ const VideoJSPlayer = ({
   onTimeUpdate,
   onReady,
   startTime,
+  forceMuted = false,
   className,
   style,
 }) => {
@@ -384,7 +426,7 @@ const VideoJSPlayer = ({
         currentSourceIndex={currentSourceIndex}
         onQualitySelect={setCurrentSourceIndex}
       >
-        <Video src={activeSrc} autoPlay={autoplay} playsInline={playsinline} preload="auto" />
+        <Video src={activeSrc} autoPlay={autoplay} playsInline={playsinline} preload="auto" muted={forceMuted} />
         {poster && <Poster src={poster} alt="" />}
       </CustomVideoSkin>
       <PlayerEffects
@@ -393,6 +435,7 @@ const VideoJSPlayer = ({
         onTimeUpdate={onTimeUpdate}
         onReady={onReady}
         startTime={startTime}
+        forceMuted={forceMuted}
       />
       <SpacebarToggle />
       <FrameStepKeys />
