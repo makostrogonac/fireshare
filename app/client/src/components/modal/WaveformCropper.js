@@ -468,9 +468,9 @@ const WaveformCropper = React.forwardRef(
       onChange({ startTime: null, endTime: null })
     }
 
-    const enabledCount = tracks.filter((t) => {
+    const enabledCount = tracks.filter((t, i) => {
       const ts = trackSettings?.find((s) => s.track_num === t.track_num)
-      return ts ? ts.enabled : true // default enabled
+      return ts ? ts.enabled : i === 0 // default to first track only
     }).length
 
     return (
@@ -504,7 +504,7 @@ const WaveformCropper = React.forwardRef(
               >
                 {tracks.map((t, i) => {
                   const ts = trackSettings?.find((s) => s.track_num === t.track_num)
-                  const enabled = ts ? ts.enabled : true
+                  const enabled = ts ? ts.enabled : i === 0
                   return (
                     <Tab
                       key={i}
@@ -639,7 +639,7 @@ const WaveformCropper = React.forwardRef(
             </Typography>
             {tracks.map((t, i) => {
               const ts = trackSettings?.find((s) => s.track_num === t.track_num)
-              const enabled = ts ? ts.enabled : true
+              const enabled = ts ? ts.enabled : i === 0
               const volume = ts?.volume ?? 100
 
               return (

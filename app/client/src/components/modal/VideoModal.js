@@ -194,7 +194,7 @@ const DateField = ({ selectedDate, selectedTime, onDateChange, onTimeChange }) =
 function AudioTrackMixer({ audioTracks, trackSettings, onTrackSettingChange }) {
   if (!audioTracks || audioTracks.length === 0) return null
 
-  const enabledCount = trackSettings?.filter((s) => s.enabled).length ?? audioTracks.length
+  const enabledCount = trackSettings?.length ? trackSettings.filter((s) => s.enabled).length : 1
 
   return (
     <Box
@@ -216,7 +216,7 @@ function AudioTrackMixer({ audioTracks, trackSettings, onTrackSettingChange }) {
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
         {audioTracks.map((track, i) => {
           const setting = trackSettings?.find((s) => s.track_num === track.track_num)
-          const enabled = setting ? setting.enabled : true
+          const enabled = setting ? setting.enabled : i === 0
           const volume = setting?.volume ?? 100
           const label = track.title || `Track ${i + 1}`
           const meta = [track.language && track.language !== 'und' ? track.language : null, track.codec_name]
@@ -400,7 +400,8 @@ function AudioPreviewSync({ videoId, audioTracks, trackSettings, playerRef }) {
         if (!audio) return
         const trackNum = previewTracks[i]?.track_num
         const ts = trackSettingsRef.current?.find((s) => s.track_num === trackNum)
-        const gain = ts?.enabled ? Math.max(0, (ts.volume ?? 100) / 100) : 0
+        const enabled = ts ? ts.enabled : i === 0
+        const gain = enabled ? Math.max(0, (ts?.volume ?? 100) / 100) : 0
         if (gainNodesRef.current[i]) gainNodesRef.current[i].gain.value = gain
         // When Web Audio is available, gain node controls boosted volume above 100%.
         // Without it, fall back to normal element volume capped at 100%.
@@ -670,7 +671,7 @@ const VideoModal = ({
           const tracks = tracksRes.data?.tracks || null
           setAudioTracks(tracks)
           if (tracks && tracks.length > 0) {
-            setTrackSettings(tracks.map((t) => ({ track_num: t.track_num, enabled: true, volume: 100 })))
+            setTrackSettings(tracks.map((t, i) => ({ track_num: t.track_num, enabled: i === 0, volume: 100 })))
           } else {
             setTrackSettings([])
           }
@@ -882,8 +883,12 @@ const VideoModal = ({
     if (!authenticated) return
     const cropChanged = cropStart !== (vid?.info?.start_time ?? null) || cropEnd !== (vid?.info?.end_time ?? null)
     const enabledTracks = trackSettings.filter((s) => s.enabled)
-    const allAudioDefault = trackSettings.length > 0 && trackSettings.every((s) => s.enabled && s.volume === 100)
-    const audioTracksCustomized = trackSettings.length > 0 && !allAudioDefault
+    const firstTrackNum = audioTracks?.[0]?.track_num
+    const defaultFirstTrackOnly =
+      trackSettings.length > 0 &&
+      firstTrackNum != null &&
+      trackSettings.every((s) => s.enabled === (s.track_num === firstTrackNum) && Number(s.volume) === 100)
+    const audioTracksCustomized = trackSettings.length > 0 && !defaultFirstTrackOnly
     const audioTracksPayload = audioTracksCustomized
       ? enabledTracks.map((s) => ({ track_index: s.track_num, volume_pct: s.volume }))
       : null
