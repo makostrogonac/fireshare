@@ -55,7 +55,7 @@ export const getDirectEmbedStreamUrl = (videoId, token) => {
 
 // U+3164 HANGUL FILLER renders as blank text but still satisfies Discord's
 // markdown link syntax, so sending only this link shows just the video embed.
-export const DISCORD_BLANK_LINK_TEXT = '\u2610'
+export const DISCORD_BLANK_LINK_TEXT = '\u2800'
 
 // Markdown link whose text is a blank character and whose target is the direct
 // 720p stream URL. Pasting this in Discord embeds the video as a bare inline
