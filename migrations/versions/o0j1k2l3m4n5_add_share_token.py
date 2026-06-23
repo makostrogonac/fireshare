@@ -1,7 +1,7 @@
 """add share_token column to video_info
 
 Revision ID: o0j1k2l3m4n5
-Revises: n9i0j1k2l3m4
+Revises: 9601ef6da2e2
 Create Date: 2026-06-18 00:00:00.000000
 
 """

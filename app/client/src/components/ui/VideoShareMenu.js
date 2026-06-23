@@ -47,18 +47,25 @@ const VideoShareMenu = ({
   }
   const close = () => setAnchorEl(null)
 
+  const copy = async (text, message) => {
+    try {
+      await copyToClipboard(text)
+      onCopied?.(message, 'info')
+    } catch {
+      onCopied?.('Failed to copy to clipboard', 'error')
+    }
+  }
+
   const handleCopyLink = (e) => {
     e.stopPropagation()
     close()
-    copyToClipboard(getPublicWatchLink(videoId, shareToken))
-    onCopied?.('Link copied to clipboard')
+    copy(getPublicWatchLink(videoId, shareToken), 'Link copied to clipboard')
   }
 
   const handleDirectEmbed = (e) => {
     e.stopPropagation()
     close()
-    copyToClipboard(getDiscordEmbedMarkdownLink(videoId, shareToken))
-    onCopied?.('Direct video embed copied to clipboard')
+    copy(getDiscordEmbedMarkdownLink(videoId, shareToken), 'Direct video embed copied to clipboard')
   }
 
   return (

@@ -527,7 +527,10 @@ def _clip_segment_duration(source_path, start_time=None, end_time=None):
 def _run_crop_ffmpeg(cmd, source_path, start_time=None, end_time=None, progress_callback=None):
     if progress_callback:
         total_duration = _clip_segment_duration(source_path, start_time, end_time)
-        return run_ffmpeg_with_progress_callback(cmd, total_duration, progress_callback=progress_callback).returncode
+        timeout_seconds = min(max(int(total_duration * 60), 600), 28800) if total_duration else None
+        return run_ffmpeg_with_progress_callback(
+            cmd, total_duration, timeout_seconds=timeout_seconds, progress_callback=progress_callback
+        ).returncode
     return sp.call(cmd)
 
 
@@ -1093,8 +1096,8 @@ def run_ffmpeg_with_progress_callback(cmd, total_duration, timeout_seconds=None,
     Run an FFmpeg command with real-time progress parsing via -progress pipe:1.
 
     progress_callback, when provided, receives (percent, eta_seconds, speed). Progress
-    is throttled to every 0.5 seconds. stderr is drained in a background thread to
-    prevent pipe buffer deadlock and logged if ffmpeg exits unsuccessfully.
+    is throttled to every 0.5 seconds. stdout/stderr are drained in background
+    threads so the timeout applies to the process, not to a blocking pipe read.
     """
     # Insert -progress pipe:1 before output file (last arg).
     cmd_with_progress = cmd[:-1] + ['-progress', 'pipe:1'] + [cmd[-1]]
@@ -1104,15 +1107,7 @@ def run_ffmpeg_with_progress_callback(cmd, total_duration, timeout_seconds=None,
     speed = None
     percent = None
     current_seconds = 0
-
     stderr_lines = []
-
-    def _drain_stderr():
-        for line in process.stderr:
-            stderr_lines.append(line.rstrip())
-
-    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
-    stderr_thread.start()
 
     def emit_progress(force=False):
         nonlocal last_update
@@ -1128,28 +1123,29 @@ def run_ffmpeg_with_progress_callback(cmd, total_duration, timeout_seconds=None,
         progress_callback(percent, eta_seconds, speed)
         last_update = now
 
-    try:
+    def _drain_stderr():
+        for line in process.stderr:
+            stderr_lines.append(line.rstrip())
+
+    def _drain_stdout():
+        nonlocal speed, percent, current_seconds
         for line in process.stdout:
             line = line.strip()
             if '=' not in line:
                 continue
 
             key, value = line.split('=', 1)
-
             if key in ('out_time_us', 'out_time_ms') and total_duration:
                 try:
-                    current_us = int(value)
-                    current_seconds = current_us / 1_000_000
+                    current_seconds = int(value) / 1_000_000
                     percent = min(100, (current_seconds / total_duration) * 100)
                 except ValueError:
                     pass
-
             elif key == 'speed' and value.endswith('x'):
                 try:
                     speed = float(value.rstrip('x'))
                 except ValueError:
                     pass
-
             elif key == 'progress':
                 if value == 'end' and total_duration:
                     percent = 100
@@ -1157,12 +1153,19 @@ def run_ffmpeg_with_progress_callback(cmd, total_duration, timeout_seconds=None,
                 else:
                     emit_progress()
 
+    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    stdout_thread = threading.Thread(target=_drain_stdout, daemon=True)
+    stderr_thread.start()
+    stdout_thread.start()
+
+    try:
         process.wait(timeout=timeout_seconds)
     except sp.TimeoutExpired:
         process.kill()
         process.wait()
         raise
     finally:
+        stdout_thread.join(timeout=5)
         stderr_thread.join(timeout=5)
 
     if process.returncode != 0 and stderr_lines:

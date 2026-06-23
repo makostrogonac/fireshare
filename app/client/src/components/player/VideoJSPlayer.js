@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react'
 import '@videojs/react/video/skin.css'
 import './videoSkinOverrides.css'
-import { createPlayer, useMedia, Poster } from '@videojs/react'
+import { createPlayer, Poster } from '@videojs/react'
 import { Video, videoFeatures } from '@videojs/react/video'
 import CustomVideoSkin from './CustomVideoSkin'
 
@@ -39,6 +39,15 @@ function PlayerEffects({
   const forcedMuteStateRef = useRef(null)
   const pendingSourceResumeRef = useRef(null)
   const lastReportedTimeRef = useRef(0)
+  const startTimeKeyRef = useRef(null)
+
+  useEffect(() => {
+    const key = `${sources?.[0]?.src || ''}:${startTime ?? ''}`
+    if (startTimeKeyRef.current !== key) {
+      startTimeApplied.current = false
+      startTimeKeyRef.current = key
+    }
+  }, [sources, startTime])
 
   useEffect(() => {
     onTimeUpdateRef.current = onTimeUpdate
@@ -172,7 +181,7 @@ function PlayerEffects({
       media.removeEventListener('canplay', handleCanPlay)
       media.removeEventListener('play', handlePlay)
     }
-  }, [media, startTime])
+  }, [media, startTime, sources])
 
   // --- Source switch resume: preserve time/play state through quality changes -
   useEffect(() => {

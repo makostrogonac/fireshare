@@ -2,6 +2,7 @@ import json
 import time
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlencode
 
 import requests as http_requests
 from flask import current_app, jsonify, request, Response, render_template, redirect
@@ -101,11 +102,14 @@ def video_metadata(video_id):
         if share_token_ok:
             _set_session_unlocked(video_id)
         password_protected = bool(video.info and video.info.password_hash) and not share_token_ok
-        embed_video_url = f"{domain}/api/video?id={video_id}&quality=720p"
-        # Include the token in the embed stream URL so Discord's scraper (which has
-        # no session) can fetch a password-protected shared video.
+        watch_url = f"{domain}/w/{video_id}"
+        embed_video_url = f"{domain}/api/video/embed/{video_id}.mp4"
+        # Include the token in both OG URLs so Discord can fetch and click through
+        # to password-protected shared videos without relying on a browser session.
         if share_token_ok and share_token:
-            embed_video_url = f"{embed_video_url}&s={share_token}"
+            token_query = urlencode({'s': share_token})
+            watch_url = f"{watch_url}?{token_query}"
+            embed_video_url = f"{embed_video_url}?{token_query}"
 
         embed_width = video.info.width if video.info else None
         embed_height = video.info.height if video.info else None
@@ -122,6 +126,7 @@ def video_metadata(video_id):
             poster_file=poster_file,
             password_protected=password_protected,
             embed_video_url=embed_video_url,
+            watch_url=watch_url,
             embed_width=embed_width,
             embed_height=embed_height,
         )
@@ -133,10 +138,9 @@ def video_metadata(video_id):
 def config():
     paths = current_app.config['PATHS']
     config_path = paths['data'] / 'config.json'
-    file = open(config_path)
-    config = json.load(file)
-    file.close()
     if config_path.exists():
+        with open(config_path) as file:
+            config = json.load(file)
         # Return ui_config plus specific app_config settings that are needed publicly
         public_config = config["ui_config"].copy()
         public_config["allow_public_game_tag"] = config.get("app_config", {}).get("allow_public_game_tag", False)

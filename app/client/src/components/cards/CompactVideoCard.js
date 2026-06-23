@@ -50,11 +50,11 @@ const CompactVideoCard = ({
   removeOnMove = false,
   showTypeIndicator = false,
 }) => {
+  const [intVideo, setIntVideo] = React.useState(video)
   // Share token is only present for authenticated viewers (owner/admin). It is
   // appended to share links only for password-protected videos so a shared link
   // is watchable by anyone without exposing the password.
-  const shareToken = video.info?.has_password ? video.info?.share_token : undefined
-  const [intVideo, setIntVideo] = React.useState(video)
+  const shareToken = intVideo.info?.has_password ? intVideo.info?.share_token : undefined
   const [hover, setHover] = React.useState(false)
   const [thumbnailHover, setThumbnailHover] = React.useState(false)
   const [game, setGame] = React.useState(video.game || null)
@@ -157,9 +157,9 @@ const CompactVideoCard = ({
     }
   }, [])
 
-  const previousVideoRef = React.useRef()
-  const previousVideo = previousVideoRef.current
-  if (!_.isEqual(video, previousVideo) && !_.isEqual(video, intVideo)) {
+  React.useEffect(() => {
+    if (_.isEqual(video, intVideo)) return
+    const previousVideoId = intVideo?.video_id
     setIntVideo(video)
     setTitle(
       video.info?.title ||
@@ -173,16 +173,14 @@ const CompactVideoCard = ({
     setDescription(video.info?.description || '')
     setLocalTags(video.tags || [])
     if (video.game !== undefined) setGame(video.game || null)
-    if (video.video_id !== previousVideo?.video_id) {
+    if (video.video_id !== previousVideoId) {
       setImgLoaded(false)
       setImgRetryKey(0)
       retryCountRef.current = 0
       clearTimeout(retryTimeoutRef.current)
     }
-  }
-  React.useEffect(() => {
-    previousVideoRef.current = video
-  })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [video])
 
   React.useEffect(() => {
     return () => clearTimeout(retryTimeoutRef.current)
@@ -321,6 +319,15 @@ const CompactVideoCard = ({
   const handleMouseDown = (e) => {
     if (e.button === 1) {
       window.open(`${PURL}${video.video_id}`, '_blank')
+    }
+  }
+
+  const copyShareText = async (text, message) => {
+    try {
+      await copyToClipboard(text)
+      alertHandler?.({ type: 'info', message, open: true })
+    } catch {
+      alertHandler?.({ type: 'error', message: 'Failed to copy to clipboard', open: true })
     }
   }
 
@@ -684,7 +691,7 @@ const CompactVideoCard = ({
               <VideoShareMenu
                 videoId={video.video_id}
                 shareToken={shareToken}
-                onCopied={(message) => alertHandler?.({ type: 'info', message, open: true })}
+                onCopied={(message, type = 'info') => alertHandler?.({ type, message, open: true })}
                 buttonSx={{
                   bgcolor: '#000000BF',
                   '&:hover': { background: '#2684FF88' },
@@ -1069,19 +1076,14 @@ const CompactVideoCard = ({
               label: 'Copy Link',
               Icon: LinkIcon,
               color: '#FFFFFFE6',
-              onClick: () => {
-                copyToClipboard(getPublicWatchLink(video.video_id, shareToken))
-                alertHandler?.({ type: 'info', message: 'Link copied to clipboard', open: true })
-              },
+              onClick: () => copyShareText(getPublicWatchLink(video.video_id, shareToken), 'Link copied to clipboard'),
             },
             {
               label: 'Direct Embed',
               Icon: MovieIcon,
               color: '#FFFFFFE6',
-              onClick: () => {
-                copyToClipboard(getDiscordEmbedMarkdownLink(video.video_id, shareToken))
-                alertHandler?.({ type: 'info', message: 'Direct video embed copied to clipboard', open: true })
-              },
+              onClick: () =>
+                copyShareText(getDiscordEmbedMarkdownLink(video.video_id, shareToken), 'Direct video embed copied to clipboard'),
             },
             {
               label: 'Move...',

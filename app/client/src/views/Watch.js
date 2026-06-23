@@ -71,10 +71,15 @@ const Watch = ({ authenticated }) => {
   const [alert, setAlert] = React.useState({ open: false })
 
   React.useEffect(() => {
+    let cancelled = false
     async function fetch() {
+      setDetails(null)
+      setNotFound(false)
+      setViewAdded(false)
       try {
         const resp = (await VideoService.getDetails(id, shareTokenParam)).data
         const videoViews = (await VideoService.getViews(id)).data
+        if (cancelled) return
         setDetails(resp)
         setViews(videoViews)
         setUnlocked(authenticated || !resp.info?.has_password || resp.info?.session_unlocked === true)
@@ -84,11 +89,12 @@ const Watch = ({ authenticated }) => {
         }
         try {
           const gameData = (await GameService.getVideoGame(id)).data
-          setSelectedGame(gameData || null)
+          if (!cancelled) setSelectedGame(gameData || null)
         } catch {
-          setSelectedGame(null)
+          if (!cancelled) setSelectedGame(null)
         }
       } catch (err) {
+        if (cancelled) return
         if (err.response && err.response.status === 404) {
           setNotFound({
             title: "We're Sorry...",
@@ -102,8 +108,11 @@ const Watch = ({ authenticated }) => {
         }
       }
     }
-    if (details == null) fetch()
-  }, [details, id])
+    fetch()
+    return () => {
+      cancelled = true
+    }
+  }, [id, shareTokenParam, authenticated])
 
   React.useEffect(() => {
     if (!selectedGame?.icon_url) {
@@ -164,19 +173,21 @@ const Watch = ({ authenticated }) => {
     return 0
   }
 
-  const copyTimestamp = () => {
+  const copyTimestamp = async () => {
     const currentTime = getCurrentTime()
-    const token =
-      details?.info?.has_password
-        ? details?.info?.share_token || shareTokenParam || undefined
-        : undefined
-    const tokenParam = token ? `&s=${encodeURIComponent(token)}` : ''
-    copyToClipboard(`${PURL}${details?.video_id}?t=${currentTime}${tokenParam}`)
-    setAlert({
-      type: 'info',
-      message: 'Time stamped link copied to clipboard',
-      open: true,
-    })
+    const token = details?.info?.has_password ? details?.info?.share_token || shareTokenParam || undefined : undefined
+    const params = new URLSearchParams({ t: String(currentTime) })
+    if (token) params.set('s', token)
+    try {
+      await copyToClipboard(`${PURL}${details?.video_id}?${params.toString()}`)
+      setAlert({
+        type: 'info',
+        message: 'Time stamped link copied to clipboard',
+        open: true,
+      })
+    } catch {
+      setAlert({ type: 'error', message: 'Failed to copy to clipboard', open: true })
+    }
   }
 
   const handleTimeUpdate = (e) => {
@@ -232,11 +243,11 @@ const Watch = ({ authenticated }) => {
             <meta
               property="og:video"
               value={
-                details?.info?.has_password
-                  ? `${URL}/api/video?id=${id}&quality=720p&s=${encodeURIComponent(details?.info?.share_token || shareTokenParam)}`
-                  : SERVED_BY === 'nginx'
-                    ? `${URL}/_content/video/${id}${details?.extension || '.mp4'}`
-                    : `${URL}/api/video?id=${id}&quality=720p`
+                `${URL}/api/video/embed/${id}.mp4${
+                  details?.info?.has_password
+                    ? `?s=${encodeURIComponent(details?.info?.share_token || shareTokenParam)}`
+                    : ''
+                }`
               }
             />
             <meta property="og:video:width" value={details?.info?.width} />
@@ -485,7 +496,7 @@ const Watch = ({ authenticated }) => {
                     ? details?.info?.share_token || shareTokenParam || undefined
                     : undefined
                 }
-                onCopied={(message) => setAlert({ type: 'info', message, open: true })}
+                onCopied={(message, type = 'info') => setAlert({ type, message, open: true })}
                 buttonSx={{ color: '#FFFFFF66', '&:hover': { color: 'white' }, p: 0.5, flexShrink: 0 }}
                 iconSx={{ fontSize: 16 }}
                 tooltip="Share"

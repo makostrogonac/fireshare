@@ -45,15 +45,15 @@ export const getPublicBaseUrl = () => {
 // Direct stream URL for a video at 720p whose path ends in .mp4. Uses the
 // dedicated /api/video/embed/<id>.mp4 route so Discord (which sniffs the URL
 // extension) embeds it as a bare inline player like a direct .mp4 link, with
-// no OpenGraph card. The server falls back to the cropped master or original
-// when a 720p transcode is not yet available. When a share token is supplied
+// no OpenGraph card. The server falls back to the cropped master or an MP4
+// original when a 720p transcode is not yet available. When a share token is supplied
 // it is appended so password-protected shared videos are accessible.
 export const getDirectEmbedStreamUrl = (videoId, token) => {
   const base = `${getPublicBaseUrl()}/api/video/embed/${videoId}.mp4`
   return token ? `${base}?s=${encodeURIComponent(token)}` : base
 }
 
-// U+3164 HANGUL FILLER renders as blank text but still satisfies Discord's
+// U+2800 BRAILLE BLANK renders as blank text but still satisfies Discord's
 // markdown link syntax, so sending only this link shows just the video embed.
 export const DISCORD_BLANK_LINK_TEXT = '\u2800'
 
@@ -67,7 +67,7 @@ export const getDiscordEmbedMarkdownLink = (videoId, token) =>
 // ?s=<token> so shared password-protected videos are watchable by anyone.
 export const getPublicWatchLink = (videoId, token) => {
   const url = `${getPublicWatchUrl()}${videoId}`
-  return token ? `${url}?s=${token}` : url
+  return token ? `${url}?s=${encodeURIComponent(token)}` : url
 }
 
 export const getVideoPath = (id, extension) => {
@@ -267,9 +267,13 @@ export const getVideoSources = (videoId, videoInfo, extension, { forceOriginal =
   const hasCrop = videoInfo?.has_crop
 
   // forceOriginal bypasses the crop — used by the editor so admins see the full uncut video
-  const sourceUrl =
-    forceOriginal && SERVED_BY === 'nginx'
+  const originalSourceUrl =
+    SERVED_BY === 'nginx'
       ? `${URL}/_content/video-raw/${videoId}${extension}`
+      : `${URL}/api/video/original?id=${videoId}${extension === '.mkv' ? '&subid=1' : ''}`
+  const sourceUrl =
+    forceOriginal
+      ? originalSourceUrl
       : hasCrop
         ? SERVED_BY === 'nginx'
           ? `${URL}/_content/derived/${videoId}/${videoId}-cropped.mp4`

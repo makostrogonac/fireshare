@@ -65,6 +65,8 @@ class VideoInfo(db.Model):
     # Used by share links so shared videos (including password-protected ones)
     # are watchable by anyone who has the link, without exposing the password.
     share_token   = db.Column(db.String(64), nullable=True, unique=True, index=True)
+    # JSON list of saved editor audio settings: [{track_index, volume_pct}, ...].
+    audio_tracks  = db.Column(db.Text, nullable=True)
 
     video       = db.relationship("Video", back_populates="info", uselist=False, lazy="joined")
 
@@ -96,6 +98,10 @@ class VideoInfo(db.Model):
             is_authed = current_user.is_authenticated
         except Exception:
             is_authed = False
+        try:
+            audio_tracks = json.loads(self.audio_tracks) if self.audio_tracks else None
+        except Exception:
+            audio_tracks = None
         j = {
             "title": self.title,
             "description": self.description,
@@ -112,6 +118,7 @@ class VideoInfo(db.Model):
             "has_crop": self.has_crop or False,
             "edited": self.has_crop or False,
             "has_password": bool(self.password_hash),
+            "audio_tracks": audio_tracks,
         }
         # Only expose the share token to authenticated users (owner/admin) so they
         # can build share links. It is never returned to anonymous viewers, who

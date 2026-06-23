@@ -143,13 +143,13 @@ def _apply_crop_async(video, video_info, start_time, end_time, paths, audio_trac
     else:
         thumbnail_skip = 0
 
-    def run():
-        phase = 'audio_mix' if audio_tracks is not None else 'crop'
-        message = 'Merging selected audio tracks…' if audio_tracks is not None else 'Cropping clip…'
-        util.write_clip_render_status(
-            paths['data'], video_id, True, phase=phase, percent=0, message=message
-        )
+    phase = 'audio_mix' if audio_tracks is not None else 'crop'
+    message = 'Merging selected audio tracks…' if audio_tracks is not None else 'Cropping clip…'
+    util.write_clip_render_status(
+        paths['data'], video_id, True, phase=phase, percent=0, message=message
+    )
 
+    def run():
         def on_crop_progress(percent, eta_seconds, _speed):
             util.write_clip_render_status(
                 paths['data'], video_id, True,
@@ -274,22 +274,13 @@ def get_videos():
         videos = Video.query.join(VideoInfo).order_by(text(sort)).all()
 
     videos_json = []
-    minted_share_token = False
     for v in videos:
-        # Ensure password-protected videos have a share token so owners can share
-        # them from the card without first opening the modal. Bounded to
-        # password-protected videos and committed once.
-        if v.info and v.info.password_hash and not v.info.share_token:
-            v.info.share_token = secrets.token_urlsafe(16)
-            minted_share_token = True
         vjson = v.json()
         vjson["view_count"] = VideoView.count(v.video_id)
         vjson["tags"] = [l.tag.json() for l in VideoTagLink.query.filter_by(video_id=v.video_id).all() if l.tag is not None]
         if vjson.get("info", {}).get("has_password"):
             vjson["info"]["session_unlocked"] = _is_session_unlocked(v.video_id)
         videos_json.append(vjson)
-    if minted_share_token:
-        db.session.commit()
 
     if sort == "views asc":
         videos_json = sorted(videos_json, key=lambda d: d['view_count'])
@@ -685,6 +676,8 @@ def handle_video_details(id):
             _UNSET = object()
             new_password   = data.pop('password', _UNSET)
             remove_password = data.pop('remove_password', False)
+            data.pop('password_hash', None)
+            data.pop('share_token', None)
 
             # Extract crop fields before the generic VideoInfo update so they don't
             # get written directly (we handle them via the crop pipeline below)
@@ -712,6 +705,7 @@ def handle_video_details(id):
             generated_password = None
             if remove_password:
                 video_info.password_hash = None
+                video_info.share_token = None
             elif new_password is not _UNSET:
                 if new_password == '__autogenerate__':
                     plain = secrets.token_urlsafe(12)
@@ -719,10 +713,17 @@ def handle_video_details(id):
                 else:
                     plain = new_password
                 video_info.password_hash = generate_password_hash(plain, method='pbkdf2:sha256')
-                # A password-protected video needs a share token so it can still be
-                # shared (the token grants access without exposing the password).
-                if not video_info.share_token:
-                    video_info.share_token = secrets.token_urlsafe(16)
+                # Rotate the token with the password; old shared links should not
+                # bypass a newly-set password.
+                video_info.share_token = secrets.token_urlsafe(16)
+
+            # Persist saved audio selection so the editor reopens with the real mix.
+            crop_changed = new_start is not _UNSET or new_end is not _UNSET
+            audio_render_requested = audio_tracks is not None
+            if audio_render_requested:
+                video_info.audio_tracks = json.dumps(audio_tracks)
+            elif crop_changed:
+                video_info.audio_tracks = None
 
             # Update Video.recorded_at if provided
             if recorded_at is not None:
@@ -746,8 +747,6 @@ def handle_video_details(id):
             # Handle render pipeline if crop times changed OR audio mixing was requested.
             # audio_tracks=None means no audio customization was sent.
             # audio_tracks=[] means the user explicitly disabled all audio tracks.
-            crop_changed = new_start is not _UNSET or new_end is not _UNSET
-            audio_render_requested = audio_tracks is not None
             if crop_changed or audio_render_requested:
                 resolved_start = new_start if new_start is not _UNSET else video_info.start_time
                 resolved_end   = new_end   if new_end   is not _UNSET else video_info.end_time
@@ -772,7 +771,7 @@ def handle_video_details(id):
                     _apply_crop_async(video, video_info, resolved_start, resolved_end, paths, audio_tracks=audio_tracks)
 
             if generated_password is not None:
-                return jsonify({"generated_password": generated_password}), 201
+                return jsonify({"generated_password": generated_password, "share_token": video_info.share_token}), 201
             return Response(status=201)
         else:
             return jsonify({
@@ -1125,7 +1124,7 @@ def get_video_embed(video_id):
     Used by the "Direct embed" share option so Discord (and other scrapers that
     sniff the URL extension) embed the video as a bare inline player, like a
     direct .mp4 link. Always serves the 720p derived file when available,
-    falling back to the cropped master or original via get_video_path. An optional
+    falling back to the cropped master or an MP4 original via get_video_path. An optional
     ?s=<share_token> grants access to password-protected shared videos.
     """
     share_token_ok = _share_token_is_valid(video_id, request.args.get('s'))
@@ -1138,6 +1137,8 @@ def get_video_embed(video_id):
         video_path = get_video_path(video_id, None, '720p')
     except Exception:
         return Response(status=404, response="Video not found")
+    if Path(video_path).suffix.lower() != '.mp4':
+        return Response(status=404, response="MP4 stream not available")
     return _stream_video_file(video_path)
 
 

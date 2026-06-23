@@ -336,8 +336,7 @@ function AudioPreviewSync({ videoId, audioTracks, trackSettings, playerRef }) {
       .filter((t) => t.track_num != null)
       .map((t) => ({
         ...t,
-        url: `${getUrl()}/api/video/audio?id=${videoId}&track=${t.track_num}&quality=original`,
-        fallbackUrl: `${getUrl()}/api/video/audio?id=${videoId}&track=${t.track_num}&quality=waveform`,
+        url: `${getUrl()}/api/video/audio?id=${videoId}&track=${t.track_num}&quality=waveform`,
       }))
   }, [videoId, audioTracks])
 
@@ -456,18 +455,12 @@ function AudioPreviewSync({ videoId, audioTracks, trackSettings, playerRef }) {
     <div style={{ display: 'none' }} aria-hidden="true">
       {previewTracks.map((track, i) => (
         <audio
-          key={track.track_num}
+          key={`${videoId}-${track.track_num}`}
           ref={(el) => {
             audioRefs.current[i] = el
           }}
           src={track.url}
           preload="auto"
-          onError={(e) => {
-            if (e.currentTarget.src !== track.fallbackUrl) {
-              e.currentTarget.src = track.fallbackUrl
-              e.currentTarget.load()
-            }
-          }}
         />
       ))}
     </div>
@@ -669,9 +662,17 @@ const VideoModal = ({
           const tracksRes = await VideoService.getAudioTracks(videoId)
           if (cancelled) return
           const tracks = tracksRes.data?.tracks || null
+          const savedMix = Array.isArray(details.info?.audio_tracks) ? details.info.audio_tracks : null
+          const savedByTrack = new Map((savedMix || []).map((t) => [Number(t.track_index), Number(t.volume_pct)]))
           setAudioTracks(tracks)
           if (tracks && tracks.length > 0) {
-            setTrackSettings(tracks.map((t, i) => ({ track_num: t.track_num, enabled: i === 0, volume: 100 })))
+            setTrackSettings(
+              tracks.map((t, i) => ({
+                track_num: t.track_num,
+                enabled: savedMix ? savedByTrack.has(Number(t.track_num)) : i === 0,
+                volume: savedByTrack.get(Number(t.track_num)) ?? 100,
+              })),
+            )
           } else {
             setTrackSettings([])
           }
@@ -733,8 +734,7 @@ const VideoModal = ({
     return () => {
       cancelled = true
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
+  }, [open, videoId])
 
   useEffect(() => {
     cropProcessingRef.current = cropProcessing
@@ -742,7 +742,7 @@ const VideoModal = ({
 
   useEffect(() => {
     if (!open) {
-      clearInterval(cropPollRef.current)
+      clearTimeout(cropPollRef.current)
       setCropProcessing(false)
       setCropStatus(null)
     }
@@ -775,6 +775,8 @@ const VideoModal = ({
         if (status.is_running) {
           cropFailureNotifiedRef.current = false
           setCropProcessing(true)
+          clearTimeout(cropPollRef.current)
+          cropPollRef.current = setTimeout(pollCropStatus, 2000)
           return
         }
 
@@ -788,19 +790,20 @@ const VideoModal = ({
         }
         setCropProcessing(false)
       } catch {
-        // keep the current overlay state if the poll fails temporarily
+        if (cropProcessingRef.current && !cancelled) {
+          clearTimeout(cropPollRef.current)
+          cropPollRef.current = setTimeout(pollCropStatus, 2000)
+        }
       }
     }
 
     pollCropStatus()
-    clearInterval(cropPollRef.current)
-    cropPollRef.current = setInterval(pollCropStatus, 2000)
 
     return () => {
       cancelled = true
-      clearInterval(cropPollRef.current)
+      clearTimeout(cropPollRef.current)
     }
-  }, [open, videoId, authenticated, updateCallback])
+  }, [open, videoId, authenticated, cropProcessing, updateCallback])
 
   const handleGameLinked = async (game, warning) => {
     try {
@@ -879,82 +882,97 @@ const VideoModal = ({
     setUpdatable(true)
   }, [])
 
+  const refreshCurrentVideoDetails = React.useCallback(async () => {
+    const details = (await VideoService.getDetails(videoId)).data
+    setVideo(details)
+    setHasPassword(details.info?.has_password || false)
+    return details
+  }, [videoId])
+
   const update = async () => {
     if (!authenticated) return
     const cropChanged = cropStart !== (vid?.info?.start_time ?? null) || cropEnd !== (vid?.info?.end_time ?? null)
-    const enabledTracks = trackSettings.filter((s) => s.enabled)
     const firstTrackNum = audioTracks?.[0]?.track_num
-    const defaultFirstTrackOnly =
+    const normalizeAudioTracks = (tracks) => {
+      if (!Array.isArray(tracks)) return null
+      return tracks
+        .map((t) => ({ track_index: Number(t.track_index), volume_pct: Number(t.volume_pct ?? 100) }))
+        .filter((t) => Number.isFinite(t.track_index) && Number.isFinite(t.volume_pct))
+        .sort((a, b) => a.track_index - b.track_index)
+    }
+    const enabledAudioSelection = normalizeAudioTracks(
+      trackSettings.filter((s) => s.enabled).map((s) => ({ track_index: s.track_num, volume_pct: s.volume })),
+    )
+    const savedAudioSelection = normalizeAudioTracks(vid?.info?.audio_tracks)
+    const defaultUnsavedAudio =
+      savedAudioSelection === null &&
       trackSettings.length > 0 &&
       firstTrackNum != null &&
-      trackSettings.every((s) => s.enabled === (s.track_num === firstTrackNum) && Number(s.volume) === 100)
-    const audioTracksCustomized = trackSettings.length > 0 && !defaultFirstTrackOnly
-    const audioTracksPayload = audioTracksCustomized
-      ? enabledTracks.map((s) => ({ track_index: s.track_num, volume_pct: s.volume }))
-      : null
+      enabledAudioSelection?.length === 1 &&
+      enabledAudioSelection[0].track_index === Number(firstTrackNum) &&
+      enabledAudioSelection[0].volume_pct === 100
+    const audioTracksChanged =
+      trackSettings.length > 0 &&
+      !defaultUnsavedAudio &&
+      JSON.stringify(enabledAudioSelection) !== JSON.stringify(savedAudioSelection)
+    const audioTracksPayload = audioTracksChanged || (cropChanged && savedAudioSelection !== null) ? enabledAudioSelection : null
 
     if (!updateable && !cropChanged && !pendingThumbnailFile && audioTracksPayload === null) {
       setEditMode(false)
       return
     }
 
-    // Optimistically close edit mode and reflect changes in the UI immediately.
-    setUpdatable(false)
-    setEditMode(false)
-    updateCallback?.({ id: vid.video_id, title, description })
-    setAlert({ type: 'success', message: 'Details Updated', open: true })
-
     const cropApplied = cropChanged && (cropStart !== null || cropEnd !== null)
     const renderApplied = cropApplied || audioTracksPayload !== null
-    const cropCleared = cropChanged && cropStart === null && cropEnd === null && audioTracksPayload === null
 
-    if (cropChanged) {
-      setVideo((prev) => ({
-        ...prev,
-        info: { ...prev.info, start_time: cropStart, end_time: cropEnd, has_crop: false },
-      }))
-    } else if (renderApplied) {
-      setVideo((prev) => ({ ...prev, info: { ...prev.info, has_crop: false } }))
-    }
-    if (renderApplied) {
-      const message = audioTracksPayload !== null ? 'Merging selected audio tracks…' : 'Cropping clip…'
-      setCropStatus({ is_running: true, phase: audioTracksPayload !== null ? 'audio_mix' : 'crop', percent: 0, message })
-      setCropProcessing(true)
-    }
-    if (cropCleared) {
-      setPlayerVersion((v) => v + 1)
-    }
-
-    // Upload pending thumbnail (must complete before details call).
-    if (pendingThumbnailFile) {
-      const formData = new FormData()
-      formData.append('file', pendingThumbnailFile)
-      try {
+    try {
+      if (pendingThumbnailFile) {
+        const formData = new FormData()
+        formData.append('file', pendingThumbnailFile)
         await VideoService.uploadCustomPoster(vid.video_id, formData)
         setHasCustomPoster(true)
         setPosterCacheKey(Date.now())
         window.URL.revokeObjectURL(pendingThumbnailPreview)
         setPendingThumbnailFile(null)
         setPendingThumbnailPreview(null)
-      } catch {
-        setAlert({ type: 'error', message: 'Failed to upload thumbnail', open: true })
       }
-    }
 
-    if (!updateable && !cropChanged && audioTracksPayload === null) return
+      if (updateable || cropChanged || audioTracksPayload !== null) {
+        const payload = { title, description, recorded_at: getRecordedAtISO() }
+        if (cropChanged) {
+          payload.start_time = cropStart
+          payload.end_time = cropEnd
+        }
+        if (audioTracksPayload !== null) {
+          payload.audio_tracks = audioTracksPayload
+        }
+        await VideoService.updateDetails(vid.video_id, payload)
+      }
 
-    try {
-      const payload = { title, description, recorded_at: getRecordedAtISO() }
-      if (cropChanged) {
-        payload.start_time = cropStart
-        payload.end_time = cropEnd
+      setUpdatable(false)
+      setEditMode(false)
+      updateCallback?.({ id: vid.video_id, title, description })
+      setVideo((prev) => ({
+        ...prev,
+        info: {
+          ...prev.info,
+          title,
+          description,
+          ...(cropChanged ? { start_time: cropStart, end_time: cropEnd, has_crop: false } : {}),
+          ...(renderApplied ? { has_crop: false } : {}),
+          ...(audioTracksPayload !== null ? { audio_tracks: audioTracksPayload } : {}),
+          ...(cropChanged && audioTracksPayload === null ? { audio_tracks: null } : {}),
+        },
+      }))
+
+      if (renderApplied) {
+        const message = audioTracksPayload !== null ? 'Merging selected audio tracks…' : 'Cropping clip…'
+        setCropStatus({ is_running: true, phase: audioTracksPayload !== null ? 'audio_mix' : 'crop', percent: 0, message })
+        setCropProcessing(true)
+      } else {
+        setPlayerVersion((v) => v + 1)
       }
-      if (audioTracksPayload !== null) {
-        payload.audio_tracks = audioTracksPayload
-      }
-      await VideoService.updateDetails(vid.video_id, payload)
-      // Always bump player version so non-rendering metadata/audio changes refresh immediately.
-      if (!renderApplied) setPlayerVersion((v) => v + 1)
+      setAlert({ type: 'success', message: 'Details Updated', open: true })
     } catch {
       setAlert({ type: 'error', message: 'An error occurred trying to save changes', open: true })
       if (renderApplied) setCropProcessing(false)
@@ -979,25 +997,30 @@ const VideoModal = ({
   }
 
   const handleTitleChange = (newValue) => {
-    if (newValue) setUpdatable(newValue !== vid.info?.title || description !== vid.info?.description)
+    setUpdatable(newValue !== (vid.info?.title || '') || description !== (vid.info?.description || ''))
     setTitle(newValue)
   }
 
   const handleDescriptionChange = (newValue) => {
-    if (newValue) setUpdatable(newValue !== vid.info?.description || title !== vid.info?.title)
+    setUpdatable(newValue !== (vid.info?.description || '') || title !== (vid.info?.title || ''))
     setDescription(newValue)
   }
 
-  const copyTimestamp = () => {
+  const copyTimestamp = async () => {
     let currentTime = 0
     if (playerRef.current && typeof playerRef.current.currentTime === 'function') {
       const time = playerRef.current.currentTime()
       currentTime = time && !isNaN(time) ? time : 0
     }
+    const params = new URLSearchParams({ t: String(currentTime) })
     const token = vid.info?.has_password ? vid.info?.share_token : undefined
-    const tokenParam = token ? `&s=${encodeURIComponent(token)}` : ''
-    copyToClipboard(`${PURL}${vid.video_id}?t=${currentTime}${tokenParam}`)
-    setAlert({ type: 'info', message: 'Time stamped link copied to clipboard', open: true })
+    if (token) params.set('s', token)
+    try {
+      await copyToClipboard(`${PURL}${vid.video_id}?${params.toString()}`)
+      setAlert({ type: 'info', message: 'Time stamped link copied to clipboard', open: true })
+    } catch {
+      setAlert({ type: 'error', message: 'Failed to copy to clipboard', open: true })
+    }
   }
 
   const handleTimeUpdate = (e) => {
@@ -1746,8 +1769,8 @@ const VideoModal = ({
                             setPasswordLoading(true)
                             try {
                               await VideoService.setPassword(vid.video_id, passwordInput.trim())
+                              await refreshCurrentVideoDetails()
                               setPasswordInput('')
-                              setHasPassword(true)
                               setAlert({ type: 'success', message: 'Password set.', open: true })
                             } catch {
                               setAlert({ type: 'error', message: 'Failed to set password.', open: true })
@@ -1768,9 +1791,13 @@ const VideoModal = ({
                                       <InputAdornment position="end" sx={{ gap: 0.25 }}>
                                         <IconButton
                                           size="small"
-                                          onClick={() => {
-                                            navigator.clipboard.writeText(passwordReveal)
-                                            setAlert({ type: 'info', message: 'Copied to clipboard.', open: true })
+                                          onClick={async () => {
+                                            try {
+                                              await copyToClipboard(passwordReveal)
+                                              setAlert({ type: 'info', message: 'Copied to clipboard.', open: true })
+                                            } catch {
+                                              setAlert({ type: 'error', message: 'Failed to copy to clipboard', open: true })
+                                            }
                                           }}
                                           sx={adornmentBtnSx}
                                         >
@@ -1815,7 +1842,8 @@ const VideoModal = ({
                                             setPasswordLoading(true)
                                             try {
                                               await VideoService.removePassword(vid.video_id)
-                                              setHasPassword(false)
+                                              await refreshCurrentVideoDetails()
+                                              setPasswordReveal(null)
                                               setAlert({ type: 'info', message: 'Password removed.', open: true })
                                             } catch {
                                               setAlert({
@@ -1859,8 +1887,8 @@ const VideoModal = ({
                                             setPasswordLoading(true)
                                             try {
                                               const res = await VideoService.generatePassword(vid.video_id)
+                                              await refreshCurrentVideoDetails()
                                               setPasswordReveal(res.data?.generated_password)
-                                              setHasPassword(true)
                                             } catch {
                                               setAlert({
                                                 type: 'error',
@@ -1945,7 +1973,7 @@ const VideoModal = ({
                     <VideoShareMenu
                       videoId={vid.video_id}
                       shareToken={vid.info?.has_password ? vid.info?.share_token : undefined}
-                      onCopied={(message) => setAlert({ type: 'info', message, open: true })}
+                      onCopied={(message, type = 'info') => setAlert({ type, message, open: true })}
                       buttonSx={actionBtnSx}
                       iconSx={{ fontSize: 20 }}
                       tooltip="Share"
